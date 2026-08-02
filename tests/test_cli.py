@@ -253,3 +253,112 @@ class TestMainCLI(unittest.TestCase):
         code, out, err = self._run(["--home", self.tmp, "show", "testshow"])
         self.assertEqual(code, 0)
         self.assertIn("session", out.lower())
+
+    def test_list_json_output(self):
+        """agentlog list --json must produce valid JSON, not a table."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        sid = "listjson0-0000-0000-0000-000000000001"
+        recs = [claude_user(sid, ts, cwd="/tmp/proj")]
+        _setup_claude_project(self.tmp, [recs])
+        code, out, err = self._run(["--home", self.tmp, "list", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertIsInstance(data, list)
+        self.assertTrue(len(data) >= 1)
+
+    def test_show_json_output(self):
+        """agentlog show ID --json must produce valid JSON, not plain text."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        sid = "showjson0-0000-0000-0000-000000000001"
+        recs = [claude_user(sid, ts, cwd="/tmp/proj")]
+        _setup_claude_project(self.tmp, [recs])
+        code, out, err = self._run(["--home", self.tmp, "show", "showjson0", "--json"])
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0]["id"], sid)
+
+    def test_list_html_errors(self):
+        """agentlog list --html must exit 2 with an error, not silently discard."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        sid = "listhtml0-0000-0000-0000-000000000001"
+        recs = [claude_user(sid, ts, cwd="/tmp/proj")]
+        _setup_claude_project(self.tmp, [recs])
+        import os
+        html_path = os.path.join(self.tmp, "out.html")
+        code, out, err = self._run(["--home", self.tmp, "list", "--html", html_path])
+        self.assertEqual(code, 2)
+        self.assertIn("not supported", err)
+        self.assertFalse(os.path.exists(html_path))
+
+    def test_show_multiple_matches_warns(self):
+        """show with a prefix that matches multiple sessions must warn on stderr."""
+        import os
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        ts = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        proj = os.path.join(self.tmp, ".claude", "projects", "-home-test")
+        os.makedirs(proj, exist_ok=True)
+        # Two sessions sharing the 'ambig000' prefix
+        for i, sid in enumerate([
+            "ambig000-aaaa-0000-0000-000000000001",
+            "ambig000-bbbb-0000-0000-000000000002",
+        ]):
+            _write_jsonl(
+                os.path.join(proj, f"sess{i}.jsonl"),
+                [claude_user(sid, ts, cwd="/tmp/proj")],
+            )
+        code, out, err = self._run(["--home", self.tmp, "show", "ambig000"])
+        self.assertEqual(code, 0)  # still exits 0, but warns
+        self.assertIn("ambig000-aaaa", err)
+        self.assertIn("ambig000-bbbb", err)
+
+    def test_list_default_limit(self):
+        """agentlog list shows at most 50 rows by default and prints a truncation note."""
+        import os
+        from datetime import datetime, timezone, timedelta
+        proj = os.path.join(self.tmp, ".claude", "projects", "-home-test")
+        os.makedirs(proj, exist_ok=True)
+        # Write 55 sessions
+        base = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+        for i in range(55):
+            ts = (base + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            sid = f"limit{i:04d}-0000-0000-0000-000000000001"
+            _write_jsonl(
+                os.path.join(proj, f"sess{i}.jsonl"),
+                [claude_user(sid, ts, cwd="/tmp/proj")],
+            )
+        code, out, err = self._run(["--home", self.tmp, "list"])
+        self.assertEqual(code, 0)
+        rows = [l for l in out.split("\n") if l.strip() and not l.startswith(("-", "I", "."))]
+        # Should show at most 50 data rows
+        self.assertLessEqual(len(rows), 50)
+        self.assertIn("more", out)
+
+    def test_list_all_flag(self):
+        """agentlog list --all shows all sessions without truncation."""
+        import os
+        from datetime import datetime, timezone, timedelta
+        proj = os.path.join(self.tmp, ".claude", "projects", "-home-test")
+        os.makedirs(proj, exist_ok=True)
+        base = datetime(2026, 8, 2, 10, 0, tzinfo=timezone.utc)
+        for i in range(55):
+            ts = (base + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            sid = f"alltest{i:02d}-0000-0000-0000-000000000001"
+            _write_jsonl(
+                os.path.join(proj, f"sess{i}.jsonl"),
+                [claude_user(sid, ts, cwd="/tmp/proj")],
+            )
+        code, out, err = self._run(["--home", self.tmp, "list", "--all"])
+        self.assertEqual(code, 0)
+        # Should NOT contain a truncation note
+        self.assertNotIn("more", out)
+        rows = [l for l in out.split("\n") if l.strip() and not l.startswith(("-", "I"))]
+        self.assertGreaterEqual(len(rows), 55)

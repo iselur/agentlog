@@ -6,7 +6,8 @@ Commands
   agentlog today | yesterday | week
   agentlog since DATE            # ISO date, or offset like 3d / 12h
   agentlog show SESSION_ID       # one session in full detail
-  agentlog list                  # all sessions, compact table
+  agentlog list                  # recent sessions, compact table (default 50)
+  agentlog list --all            # all sessions
 
 Output flags (may be combined with any time command)
   --html FILE                    # write self-contained HTML digest
@@ -14,7 +15,8 @@ Output flags (may be combined with any time command)
   --json                         # machine-readable JSON
 
 Other flags
-  --content                      # include message text excerpts (off by default)
+  --all                          # list: show all sessions (no row limit)
+  --limit N                      # list: show at most N sessions (default 50)
   --verbose                      # show skipped-line counts and debug hints
   --home DIR                     # override home directory (useful for tests)
 
@@ -166,7 +168,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="write Markdown to FILE (or stdout if FILE omitted)",
     )
     p.add_argument("--json", action="store_true", help="print JSON to stdout")
-    p.add_argument("--content", action="store_true", help="include message text excerpts")
+    p.add_argument("--all", action="store_true", help="list: show all sessions (no row limit)")
+    p.add_argument("--limit", type=int, default=50, metavar="N", help="list: max rows to show (default 50)")
     p.add_argument("--verbose", action="store_true", help="show parsing diagnostics")
     p.add_argument(
         "--home",
@@ -192,7 +195,22 @@ def main(argv=None) -> int:
         if not sessions:
             _no_sessions_msg(home_dir)
             return 0
-        print(render_list(sessions))
+        if args.html or args.md is not None:
+            print(
+                "agentlog: --html and --md are not supported for 'list'; "
+                "use a time command (today, week, since ...) instead",
+                file=sys.stderr,
+            )
+            return 2
+        if args.json:
+            print(render_json(sessions))
+            return 0
+        # Apply row limit
+        limit = None if getattr(args, "all", False) else args.limit
+        truncated = sessions if limit is None else sessions[:limit]
+        print(render_list(truncated))
+        if limit is not None and len(sessions) > limit:
+            print(f"... and {len(sessions) - limit} more  (use --all to see everything)")
         return 0
 
     # ---- 'show SESSION_ID' command ----
@@ -206,7 +224,25 @@ def main(argv=None) -> int:
         if not matches:
             print(f"agentlog: no session found matching '{args.arg}'", file=sys.stderr)
             return 2
-        print(render_show(matches[0], content=args.content))
+        if len(matches) > 1:
+            print(
+                f"agentlog: {len(matches)} sessions match '{args.arg}'; "
+                "showing the first. Use more characters to disambiguate:",
+                file=sys.stderr,
+            )
+            for m in matches:
+                print(f"  {m['id']}", file=sys.stderr)
+        if args.html or args.md is not None:
+            print(
+                "agentlog: --html and --md are not supported for 'show'; "
+                "use a time command (today, week, since ...) instead",
+                file=sys.stderr,
+            )
+            return 2
+        if args.json:
+            print(render_json([matches[0]]))
+            return 0
+        print(render_show(matches[0]))
         return 0
 
     # ---- time-range commands ----

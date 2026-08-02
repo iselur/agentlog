@@ -355,3 +355,162 @@ class TestFindSessions(unittest.TestCase):
         sessions, _ = find_sessions(self.tmp)
         valid = [s for s in sessions if s["start"] is not None]
         self.assertTrue(valid[0]["start"] > valid[-1]["start"])
+
+    def test_symlink_not_double_counted(self):
+        """A symlink pointing to an already-parsed file must not produce a second session."""
+        proj_dir = os.path.join(self.tmp, ".claude", "projects", "-home-test")
+        os.makedirs(proj_dir, exist_ok=True)
+        sid = "symtest-0000-0000-0000-000000000001"
+        records = [claude_user(sid, "2026-08-02T10:00:00Z", cwd="/tmp/proj")]
+        real = os.path.join(proj_dir, "real.jsonl")
+        _write_jsonl(real, records)
+        link = os.path.join(proj_dir, "alias.jsonl")
+        os.symlink(real, link)
+        sessions, _ = find_sessions(self.tmp)
+        # Only one session, despite two files on disk
+        self.assertEqual(len(sessions), 1)
+
+    def test_duplicate_session_id_deduplicated(self):
+        """Two files with the same session_id (Codex parallel workers) appear as one session."""
+        codex_dir = os.path.join(self.tmp, ".codex", "sessions", "2026", "08", "02")
+        os.makedirs(codex_dir, exist_ok=True)
+        shared_sid = "019fc000-aaaa-7000-0000-000000000099"
+
+        # Worker A: 1 user turn
+        _write_jsonl(
+            os.path.join(codex_dir, "rollout-2026-08-02T10-00-00-019fc000-aaaa-7000-0000-000000000099.jsonl"),
+            [
+                codex_session_meta(shared_sid, "/tmp/relay", "2026-08-02T10:00:00Z"),
+                codex_user_message("2026-08-02T10:00:01Z"),
+            ],
+        )
+        # Worker B: 2 user turns — should be kept as the richer entry
+        _write_jsonl(
+            os.path.join(codex_dir, "rollout-2026-08-02T10-00-01-019fc000-aaaa-7000-0000-000000000099.jsonl"),
+            [
+                codex_session_meta(shared_sid, "/tmp/relay", "2026-08-02T10:00:00Z"),
+                codex_user_message("2026-08-02T10:00:01Z"),
+                codex_user_message("2026-08-02T10:00:02Z"),
+            ],
+        )
+        sessions, _ = find_sessions(self.tmp)
+        # Must be exactly one session
+        self.assertEqual(len(sessions), 1)
+        # Must be the richer one (2 turns)
+        self.assertEqual(sessions[0]["user_turns"], 2)
+
+
+class TestCacheTokens(unittest.TestCase):
+    """Regression tests for HIGH #2: Claude cache field undercount."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def _session_file(self, records: list) -> str:
+        proj = os.path.join(self.tmp, ".claude", "projects", "-home-test")
+        os.makedirs(proj, exist_ok=True)
+        path = os.path.join(proj, "cache-session.jsonl")
+        _write_jsonl(path, records)
+        return path
+
+    def test_cache_creation_tokens_included(self):
+        """cache_creation_input_tokens must be added to tokens_in."""
+        sid = "cache-test-0000-0000-0000-000000000001"
+        records = [
+            claude_user(sid, "2026-08-02T10:00:00Z"),
+            claude_assistant(
+                sid, "2026-08-02T10:01:00Z",
+                msg_id="m1",
+                tokens_in=2,
+                cache_creation_tokens=6000,
+                cache_read_tokens=0,
+                tokens_out=100,
+            ),
+        ]
+        path = self._session_file(records)
+        sess = parse_claude_session(path)
+        # tokens_in must include the cache creation field
+        self.assertEqual(sess["tokens_in"], 6002)
+        self.assertEqual(sess["tokens_out"], 100)
+
+    def test_cache_read_tokens_included(self):
+        """cache_read_input_tokens must be added to tokens_in."""
+        sid = "cache-test-0000-0000-0000-000000000002"
+        records = [
+            claude_user(sid, "2026-08-02T10:00:00Z"),
+            claude_assistant(
+                sid, "2026-08-02T10:01:00Z",
+                msg_id="m2",
+                tokens_in=1,
+                cache_creation_tokens=0,
+                cache_read_tokens=20000,
+                tokens_out=50,
+            ),
+        ]
+        path = self._session_file(records)
+        sess = parse_claude_session(path)
+        self.assertEqual(sess["tokens_in"], 20001)
+
+    def test_all_three_cache_fields_summed(self):
+        """All three input token fields are summed for a single message."""
+        sid = "cache-test-0000-0000-0000-000000000003"
+        records = [
+            claude_user(sid, "2026-08-02T10:00:00Z"),
+            claude_assistant(
+                sid, "2026-08-02T10:01:00Z",
+                msg_id="m3",
+                tokens_in=5,
+                cache_creation_tokens=1000,
+                cache_read_tokens=2000,
+                tokens_out=75,
+            ),
+        ]
+        path = self._session_file(records)
+        sess = parse_claude_session(path)
+        self.assertEqual(sess["tokens_in"], 3005)
+
+
+class TestCodexTokenInflation(unittest.TestCase):
+    """Regression tests for HIGH #1: Codex cumulative token snapshot inflation."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def _session_file(self, records: list) -> str:
+        sess_dir = os.path.join(self.tmp, ".codex", "sessions", "2026", "08", "02")
+        os.makedirs(sess_dir, exist_ok=True)
+        path = os.path.join(sess_dir, "rollout-2026-08-02T10-00-00-019fd000-0000-7000-0000-000000000001.jsonl")
+        _write_jsonl(path, records)
+        return path
+
+    def test_multiturn_uses_final_snapshot_not_sum(self):
+        """Multiple token_count records are cumulative; only the last value must be used."""
+        sid = "019fd000-0000-7000-0000-000000000001"
+        # Simulate 3 turns where each snapshot is cumulative:
+        # turn 1: 13000, turn 2: 15000, turn 3: 25000
+        # A broken implementation sums: 13000+15000+25000 = 53000
+        # The correct answer is 25000 (the final snapshot)
+        records = [
+            codex_session_meta(sid, "/tmp/proj", "2026-08-02T10:00:00Z"),
+            codex_user_message("2026-08-02T10:00:01Z"),
+            codex_token_count("2026-08-02T10:00:02Z", inp=13000, out=100),
+            codex_user_message("2026-08-02T10:01:00Z"),
+            codex_token_count("2026-08-02T10:01:01Z", inp=15000, out=150),
+            codex_user_message("2026-08-02T10:02:00Z"),
+            codex_token_count("2026-08-02T10:02:01Z", inp=25000, out=200),
+        ]
+        path = self._session_file(records)
+        sess = parse_codex_session(path)
+        # Must equal the final snapshot, NOT the sum of all snapshots
+        self.assertEqual(sess["tokens_in"], 25000)
+        self.assertEqual(sess["tokens_out"], 200)
+        # Confirm it is NOT the inflated sum
+        self.assertNotEqual(sess["tokens_in"], 53000)

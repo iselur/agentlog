@@ -210,7 +210,7 @@ def render_list(sessions: List[Dict]) -> str:
 # Single-session detail (agentlog show SESSION_ID)
 # ---------------------------------------------------------------------------
 
-def render_show(s: Dict, content: bool = False) -> str:
+def render_show(s: Dict) -> str:
     """Render a single session in full detail."""
     lines: List[str] = []
     lines.append(f"session  {s['id']}")

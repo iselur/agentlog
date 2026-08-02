@@ -23,34 +23,27 @@ agentlog today
 **Real output (2026-08-02, this machine):**
 
 ```
-87 sessions · 21h 07m · 6 projects · 37 files edited · 603 commands · 19 errors
+29 sessions · 17h 09m · 5 projects · 18 files edited · 452 commands · 14 errors
 
-  019fc4a1  relay  [codex]
-    2026-08-02 22:39 – 22:39  (5s)  1 turns
+  019fc4b9  relay  [codex]
+    2026-08-02 23:05 – 23:12  (6m 18s)  1 turns
+    tokens — in: 151,757  out: 1,224
 
-  251407af  r102-bench  [claude]
-    2026-08-02 22:31 – 22:38  (6m 59s)  7 turns
-    model: claude-sonnet-4-6
-    files:
-      /home/val/agentdiff/agentdiff/__init__.py
-      /home/val/agentdiff/agentdiff/git.py
-    commands (4):
-      $ ... -20 && test -d /home/val/agentdiff && echo "EXISTS" || echo "DOES NO...
-      $ ls /home/val/stillworks/ && head -30 /home/val/stillworks/pyproject.toml
-      $ ... and 2 more
-    tokens — in: 8  out: 232
+  019fc4a7  relay  [codex]
+    2026-08-02 22:45 – 22:52  (6m 41s)  1 turns
+    tokens — in: 168,085  out: 2,713
 
   4ef1361b  val  [claude]  "orchestrator migration to codex"
-    2026-08-02 13:07 ��� 22:36  (9h 29m)  552 turns
+    2026-08-02 13:07 – 23:18  (10h 10m)  669 turns
     model: claude-fable-5, claude-opus-5
     files:
-      /home/val/orchestrator/CLAUDE.md  (read)
+      /home/val/orchestrator/CLAUDE.md (r)
       ... and 24 more
-    commands (345):
+    commands (433):
       $ ls -la /home/val/orchestrator/ && which codex && codex --version 2>/dev/...
-      $ ... and 340 more
-    tokens — in: 944  out: 317,808
-    errors: 11
+      $ ... and 428 more
+    tokens — in: 50,603,331  out: 374,633
+    errors: 14
 ```
 
 Generate an HTML digest you can share:
@@ -69,24 +62,27 @@ agentlog                        same as: agentlog today
 agentlog today | yesterday | week
 agentlog since DATE             ISO date (2026-07-15) or offset (3d, 12h, 2w)
 agentlog show SESSION_ID        one session in full detail
-agentlog list                   all sessions as a compact table
+agentlog list                   50 most-recent sessions as a compact table
+agentlog list --all             all sessions (no row limit)
+agentlog list --limit N         show at most N sessions
 
-agentlog list (first 5 rows):
+agentlog list (first 3 rows):
 
 ID        PROJECT                   WHEN              DUR       SRC
 --------  ------------------------  ----------------  --------  ------
-019fc4a1  relay                     2026-08-02 22:39  13s       codex
-251407af  r102-bench                2026-08-02 22:31  6m 59s    claude
-251407af  r102-bench                2026-08-02 22:27  11m 32s   claude
+019fc4b9  relay                     2026-08-02 23:05  6m 18s    codex
+019fc4a7  relay                     2026-08-02 22:45  6m 41s    codex
+019fc4a1  relay                     2026-08-02 22:39  4m 29s    codex
 ```
 
-Output flags (combine with any time command):
+Output flags:
 
 ```
 --html FILE       write a self-contained HTML digest to FILE
+                  (time commands only: today, yesterday, week, since)
 --md [FILE]       Markdown to FILE, or stdout if FILE is omitted
---json            JSON to stdout (machine-readable, for pipes)
---content         include message text excerpts (off by default)
+                  (time commands only)
+--json            JSON to stdout; works with all commands including list and show
 --verbose         show parsing diagnostics (skipped-line counts)
 --home DIR        override home directory; used by tests and CI
 ```
@@ -115,7 +111,7 @@ For each session it derives:
 | files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`) |
 | commands | `Bash` tool-use calls (`input.command`); Codex `exec_command` |
 | errors | `tool_result` records with `is_error: true` |
-| tokens | `message.usage.input_tokens` / `output_tokens` in `assistant` records |
+| tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
 
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.
@@ -232,13 +228,18 @@ columns are always empty for Codex sessions.
 **Tokens are not verified.**  Token counts come from usage fields in the logs.
 They may differ from what your billing provider records.
 
-**Content is not shown by default.**  Pass `--content` to include message
-excerpts.  The HTML digest contains file paths and shell commands; review it
-before sharing.
+**Message text is never shown.**  agentlog extracts metadata only: file paths,
+shell commands, durations, model names, and token counts.  Conversation content
+is not extracted or displayed regardless of any flag.
 
 **No test coverage against the developer's real logs.**  The test suite uses
 synthetic fixtures.  It cannot guarantee correct parsing of every schema variant
 in the wild.
+
+**Codex session deduplication keeps one file per session ID.**  When Codex runs
+parallel worker agents, all workers share the same session_id.  agentlog keeps
+the file with the most user turns and discards the rest.  Activity recorded only
+in the discarded workers (commands, errors) is not surfaced.
 
 ---
 
@@ -246,8 +247,8 @@ in the wild.
 
 agentlog is strictly local.  No network code.  Nothing is uploaded or sent.
 
-By default it shows metadata only: file paths, shell commands, durations, and
-model names.  Message text is hidden unless you pass `--content`.
+It shows metadata only: file paths, shell commands, durations, and model names.
+Message text is never extracted or displayed.
 
 The HTML digest may contain file paths and shell commands from your sessions.
 Review it before sharing it with others.

@@ -174,11 +174,18 @@ def parse_claude_session(path: str) -> Optional[Dict]:
             msg = obj.get("message") or {}
             msg_id = msg.get("id", "")
 
-            # Token counts — deduplicate by message id
+            # Token counts — deduplicate by message id.
+            # Include cache_creation_input_tokens and cache_read_input_tokens:
+            # Claude Code's prompt caching means input_tokens alone is almost
+            # zero on most turns; the cache fields carry the real load.
             if msg_id and msg_id not in seen_msg_ids:
                 seen_msg_ids.add(msg_id)
                 usage = msg.get("usage") or {}
-                tok_in += usage.get("input_tokens", 0) or 0
+                tok_in += (
+                    (usage.get("input_tokens", 0) or 0)
+                    + (usage.get("cache_creation_input_tokens", 0) or 0)
+                    + (usage.get("cache_read_input_tokens", 0) or 0)
+                )
                 tok_out += usage.get("output_tokens", 0) or 0
 
             model = msg.get("model")
@@ -298,10 +305,18 @@ def parse_codex_session(path: str) -> Optional[Dict]:
             if pt == "user_message":
                 s["user_turns"] += 1
             elif pt == "token_count":
+                # last_token_usage is the session's *cumulative* total at this
+                # point in the conversation — each snapshot is higher than the
+                # previous.  Take the maximum seen so that the final (highest)
+                # value is used, rather than summing all snapshots.
                 info = payload.get("info") or {}
                 last = info.get("last_token_usage") or {}
-                tok_in += last.get("input_tokens", 0) or 0
-                tok_out += last.get("output_tokens", 0) or 0
+                ti = last.get("input_tokens", 0) or 0
+                to = last.get("output_tokens", 0) or 0
+                if ti > tok_in:
+                    tok_in = ti
+                if to > tok_out:
+                    tok_out = to
 
         elif record_type == "response_item":
             pt = payload.get("type", "")
@@ -355,19 +370,46 @@ def find_sessions(home_dir: Optional[str] = None) -> tuple[List[Dict], List[str]
     sessions: List[Dict] = []
     sources: List[str] = []
 
+    # Track real (resolved) file paths to skip symlink duplicates.
+    seen_real_paths: set = set()
+
+    def _add(sess: Optional[Dict], path: str) -> None:
+        if sess is None:
+            return
+        real = os.path.realpath(path)
+        if real in seen_real_paths:
+            return
+        seen_real_paths.add(real)
+        sessions.append(sess)
+
     if os.path.isdir(claude_dir):
         sources.append("Claude Code")
         for path in glob.glob(os.path.join(claude_dir, "**", "*.jsonl"), recursive=True):
-            sess = parse_claude_session(path)
-            if sess:
-                sessions.append(sess)
+            _add(parse_claude_session(path), path)
 
     if os.path.isdir(codex_dir):
         sources.append("Codex")
         for path in glob.glob(os.path.join(codex_dir, "**", "*.jsonl"), recursive=True):
-            sess = parse_codex_session(path)
-            if sess:
-                sessions.append(sess)
+            _add(parse_codex_session(path), path)
+
+    # Deduplicate by session ID: Codex parallel-worker files all carry the
+    # same session_id in their session_meta record.  Keep the one session that
+    # has the most user turns (richest data); fall back to longest duration.
+    by_id: Dict[str, Dict] = {}
+    for s in sessions:
+        sid = s["id"]
+        existing = by_id.get(sid)
+        if existing is None:
+            by_id[sid] = s
+        else:
+            # Prefer the entry with more turns, then longer duration
+            s_turns = s["user_turns"]
+            e_turns = existing["user_turns"]
+            s_dur = s["duration_s"] or 0.0
+            e_dur = existing["duration_s"] or 0.0
+            if s_turns > e_turns or (s_turns == e_turns and s_dur > e_dur):
+                by_id[sid] = s
+    sessions = list(by_id.values())
 
     # Sort newest-first; sessions without a start time go to the end
     _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)

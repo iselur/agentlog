@@ -65,10 +65,20 @@ def claude_assistant(
     tools: list = None,
     tokens_in: int = 100,
     tokens_out: int = 50,
+    cache_creation_tokens: int = 0,
+    cache_read_tokens: int = 0,
 ) -> dict:
     content = []
     for t in (tools or []):
         content.append(t)
+    usage: dict = {
+        "input_tokens": tokens_in,
+        "output_tokens": tokens_out,
+    }
+    if cache_creation_tokens:
+        usage["cache_creation_input_tokens"] = cache_creation_tokens
+    if cache_read_tokens:
+        usage["cache_read_input_tokens"] = cache_read_tokens
     return {
         "type": "assistant",
         "sessionId": session_id,
@@ -78,10 +88,7 @@ def claude_assistant(
             "model": model,
             "id": msg_id,
             "content": content,
-            "usage": {
-                "input_tokens": tokens_in,
-                "output_tokens": tokens_out,
-            },
+            "usage": usage,
         },
     }
 
