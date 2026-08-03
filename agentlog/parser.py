@@ -35,6 +35,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import stat
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -43,14 +44,80 @@ from typing import Dict, List, Optional
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _ts(raw: str) -> Optional[datetime]:
-    """Parse ISO 8601 string to an aware datetime.  Returns None on failure."""
-    if not raw:
+def _ts(raw) -> Optional[datetime]:
+    """Parse an ISO 8601 string to an *aware* datetime.  None on failure.
+
+    Always aware, never naive.  A log that dropped its ``Z`` would otherwise
+    hand back a naive datetime, and the first comparison against an aware one
+    raises TypeError halfway through the digest.  Assuming UTC is the honest
+    reading: it is the offset the format is written in.
+    """
+    if not isinstance(raw, str) or not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _text(value) -> str:
+    """A field that ought to be a string, as a string.  Anything else is empty.
+
+    Session logs are written by another program having a bad day; a ``cwd``
+    that arrives as a number should cost the digest one blank field, not the
+    whole run.
+    """
+    return value if isinstance(value, str) else ""
+
+
+def _obj(value) -> Dict:
+    """A field that ought to be an object, as an object."""
+    return value if isinstance(value, dict) else {}
+
+
+def _items(value) -> List:
+    """A field that ought to be a list, as a list."""
+    return value if isinstance(value, list) else []
+
+
+def _count(value) -> int:
+    """A token count, however the log spelled it.  Anything else is zero."""
+    if isinstance(value, bool) or value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        try:
+            return int(value)
+        except (ValueError, OverflowError):
+            return 0
+    if isinstance(value, str):
+        try:
+            return int(float(value.strip()))
+        except ValueError:
+            return 0
+    return 0
+
+
+def _failed(value) -> bool:
+    """Did a command exit non-zero?  Missing or unreadable counts as success.
+
+    Guessing "failed" from a field nobody can parse would invent errors that
+    never happened, which is worse than missing a real one.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float)):
+        return int(value) != 0
+    if isinstance(value, str):
+        try:
+            return int(value.strip()) != 0
+        except ValueError:
+            return False
+    return False
 
 
 def _dedup(items: List[str]) -> List[str]:
@@ -91,7 +158,18 @@ def _empty_session(session_id: str, source: str) -> Dict:
 
 
 def _read_lines(path: str) -> tuple[List[str], int]:
-    """Read lines from a JSONL file.  Returns (lines, read_error_count)."""
+    """Read lines from a JSONL file.  Returns (lines, read_error_count).
+
+    Only regular files are opened.  A FIFO or a socket that happens to be named
+    ``*.jsonl`` blocks *at open* until somebody writes to it, and a digest tool
+    that hangs forever on a stray pipe is worse than one that crashes — there is
+    nothing on screen to explain the wait.
+    """
+    try:
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            return [], 1
+    except OSError:
+        return [], 1
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             return fh.readlines(), 0
@@ -108,16 +186,16 @@ _CLAUDE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
 
 def _claude_tool_items(assistant_obj: Dict):
     """Yield (tool_id, tool_name, tool_input) for each tool_use in an assistant record."""
-    msg = assistant_obj.get("message") or {}
-    for item in msg.get("content") or []:
+    msg = _obj(assistant_obj.get("message"))
+    for item in _items(msg.get("content")):
         if not isinstance(item, dict):
             continue
         if item.get("type") != "tool_use":
             continue
         yield (
-            item.get("id", ""),
-            item.get("name", ""),
-            item.get("input") or {},
+            _text(item.get("id")),
+            _text(item.get("name")),
+            _obj(item.get("input")),
         )
 
 
@@ -163,30 +241,30 @@ def parse_claude_session(path: str) -> Optional[Dict]:
 
         if record_type == "user":
             if not s["project"]:
-                s["project"] = obj.get("cwd") or ""
+                s["project"] = _text(obj.get("cwd"))
             if not s["version"]:
-                s["version"] = obj.get("version")
+                s["version"] = _text(obj.get("version")) or None
             # Prefer the sessionId embedded in the record over the filename
-            if s["id"] == session_id and obj.get("sessionId"):
-                s["id"] = obj["sessionId"]
+            if s["id"] == session_id and _text(obj.get("sessionId")):
+                s["id"] = _text(obj["sessionId"])
             s["user_turns"] += 1
             # Count tool errors embedded in user content
-            msg = obj.get("message") or {}
-            for item in msg.get("content") or []:
+            msg = _obj(obj.get("message"))
+            for item in _items(msg.get("content")):
                 if (
                     isinstance(item, dict)
                     and item.get("type") == "tool_result"
                     and item.get("is_error")
                 ):
                     s["errors"] += 1
-                    label = tool_labels.get(item.get("tool_use_id", ""), "")
+                    label = tool_labels.get(_text(item.get("tool_use_id")), "")
                     s["failed_cmds"].append(label)
                     s["events"].append((ts, "error", label))
             s["events"].append((ts, "turn", ""))
 
         elif record_type == "assistant":
-            msg = obj.get("message") or {}
-            msg_id = msg.get("id", "")
+            msg = _obj(obj.get("message"))
+            msg_id = _text(msg.get("id"))
 
             # Token counts — deduplicate by message id.
             # Include cache_creation_input_tokens and cache_read_input_tokens:
@@ -194,15 +272,15 @@ def parse_claude_session(path: str) -> Optional[Dict]:
             # zero on most turns; the cache fields carry the real load.
             if msg_id and msg_id not in seen_msg_ids:
                 seen_msg_ids.add(msg_id)
-                usage = msg.get("usage") or {}
+                usage = _obj(msg.get("usage"))
                 tok_in += (
-                    (usage.get("input_tokens", 0) or 0)
-                    + (usage.get("cache_creation_input_tokens", 0) or 0)
-                    + (usage.get("cache_read_input_tokens", 0) or 0)
+                    _count(usage.get("input_tokens"))
+                    + _count(usage.get("cache_creation_input_tokens"))
+                    + _count(usage.get("cache_read_input_tokens"))
                 )
-                tok_out += usage.get("output_tokens", 0) or 0
+                tok_out += _count(usage.get("output_tokens"))
 
-            model = msg.get("model")
+            model = _text(msg.get("model"))
             if model and model not in s["models"]:
                 s["models"].append(model)
 
@@ -212,7 +290,7 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     continue
                 if tool_id:
                     seen_tool_ids.add(tool_id)
-                fp = inp.get("file_path", "")
+                fp = _text(inp.get("file_path"))
                 if name == "Read" and fp:
                     files_read.append(fp)
                     s["events"].append((ts, "read", fp))
@@ -223,7 +301,7 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     s["events"].append((ts, "write", fp))
                     tool_labels[tool_id] = f"edit {os.path.basename(fp)}"
                 elif name == "Bash":
-                    cmd = inp.get("command", "")
+                    cmd = _text(inp.get("command"))
                     if cmd:
                         commands.append(cmd)
                         s["events"].append((ts, "cmd", cmd))
@@ -232,7 +310,7 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     tool_labels[tool_id] = name
 
         elif record_type == "ai-title":
-            s["ai_title"] = obj.get("aiTitle")
+            s["ai_title"] = _text(obj.get("aiTitle")) or None
 
     # Require at least one user turn or timestamp to be a real session
     if s["user_turns"] == 0 and s["start"] is None:
@@ -350,16 +428,17 @@ def parse_codex_session(path: str) -> Optional[Dict]:
             continue
 
         if record_type == "session_meta":
-            s["id"] = payload.get("session_id") or payload.get("id") or session_id
-            s["project"] = payload.get("cwd") or ""
-            s["version"] = payload.get("cli_version")
+            s["id"] = (_text(payload.get("session_id"))
+                       or _text(payload.get("id")) or session_id)
+            s["project"] = _text(payload.get("cwd"))
+            s["version"] = _text(payload.get("cli_version")) or None
 
         elif record_type == "turn_context":
             if not s["project"]:
-                s["project"] = payload.get("cwd") or ""
+                s["project"] = _text(payload.get("cwd"))
 
         elif record_type == "event_msg":
-            pt = payload.get("type", "")
+            pt = _text(payload.get("type"))
             if pt == "user_message":
                 s["user_turns"] += 1
                 s["events"].append((ts, "turn", ""))
@@ -368,19 +447,21 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 # point in the conversation — each snapshot is higher than the
                 # previous.  Take the maximum seen so that the final (highest)
                 # value is used, rather than summing all snapshots.
-                info = payload.get("info") or {}
-                last = info.get("last_token_usage") or {}
-                ti = last.get("input_tokens", 0) or 0
-                to = last.get("output_tokens", 0) or 0
+                info = _obj(payload.get("info"))
+                last = _obj(info.get("last_token_usage"))
+                ti = _count(last.get("input_tokens"))
+                to = _count(last.get("output_tokens"))
                 if ti > tok_in:
                     tok_in = ti
                 if to > tok_out:
                     tok_out = to
 
         elif record_type == "response_item":
-            pt = payload.get("type", "")
+            pt = _text(payload.get("type"))
             if pt == "function_call" and payload.get("name") in _CODEX_WORK_CALLS:
-                args_str = payload.get("arguments", "{}")
+                args_str = payload.get("arguments")
+                if not isinstance(args_str, str):
+                    args_str = "{}"
                 try:
                     args = json.loads(args_str)
                 except (json.JSONDecodeError, ValueError):
@@ -398,7 +479,7 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 if cmd:
                     commands.append(cmd)
                     s["events"].append((ts, "cmd", cmd))
-                    call_id = payload.get("call_id") or ""
+                    call_id = _text(payload.get("call_id"))
                     if call_id:
                         call_cmds[call_id] = cmd
                 # Codex edits files by piping an apply_patch envelope through
@@ -407,7 +488,7 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 # Envelopes name files relative to the working directory as
                 # often as absolutely; without this the same file shows up
                 # twice under two spellings.
-                root = args.get("workdir") or s["project"] or ""
+                root = _text(args.get("workdir")) or s["project"] or ""
                 for path in _patched_files(patch or cmd):
                     if not os.path.isabs(path) and isinstance(root, str) and root:
                         path = os.path.normpath(os.path.join(root, path))
@@ -415,14 +496,13 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                     s["write_counts"][path] = s["write_counts"].get(path, 0) + 1
                     s["events"].append((ts, "write", path))
             elif pt == "function_call_output":
-                output = payload.get("output") or {}
-                if isinstance(output, dict):
-                    meta = output.get("metadata") or {}
-                    if isinstance(meta, dict) and meta.get("exit_code", 0) not in (0, None):
-                        s["errors"] += 1
-                        label = call_cmds.get(payload.get("call_id") or "", "")
-                        s["failed_cmds"].append(label)
-                        s["events"].append((ts, "error", label))
+                output = _obj(payload.get("output"))
+                meta = _obj(output.get("metadata"))
+                if _failed(meta.get("exit_code")):
+                    s["errors"] += 1
+                    label = call_cmds.get(_text(payload.get("call_id")), "")
+                    s["failed_cmds"].append(label)
+                    s["events"].append((ts, "error", label))
 
     if s["user_turns"] == 0 and s["start"] is None:
         return None

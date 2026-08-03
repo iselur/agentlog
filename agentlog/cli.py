@@ -79,9 +79,18 @@ def _parse_since(value: str) -> Optional[datetime]:
             n = int(value[:-1])
         except ValueError:
             return None
+        if n <= 0:
+            # 'since 0d' is an empty window and 'since -3d' is the future;
+            # neither is what anybody meant to type.
+            return None
         unit = value[-1]
-        delta = {"d": timedelta(days=n), "h": timedelta(hours=n), "w": timedelta(weeks=n)}[unit]
-        return datetime.now(timezone.utc) - delta
+        try:
+            delta = {"d": timedelta(days=n), "h": timedelta(hours=n),
+                     "w": timedelta(weeks=n)}[unit]
+            return datetime.now(timezone.utc) - delta
+        except (OverflowError, OSError):
+            # timedelta gives out long before int does.
+            return None
 
     # ISO date
     try:
@@ -209,6 +218,45 @@ def _filter_project(sessions: List[Dict], needle: str) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
+# Output paths
+# ---------------------------------------------------------------------------
+
+# Commands that take a second word.  Everything else takes none, and a stray
+# word after them is a typo the person deserves to be told about.
+_COMMANDS_WITH_ARG = ("since", "show")
+
+
+def _log_dirs(home_dir: Optional[str]) -> List[str]:
+    home = home_dir or os.environ.get("AGENTLOG_HOME") or os.path.expanduser("~")
+    return [
+        os.path.realpath(os.path.join(home, ".claude", "projects")),
+        os.path.realpath(os.path.join(home, ".codex", "sessions")),
+    ]
+
+
+def _refuses_to_write(target: str, home_dir: Optional[str]) -> Optional[str]:
+    """Why this path must not be written to, or None if it is fine.
+
+    agentlog's one promise is that it never writes to the session logs.  A
+    digest written over ``~/.claude/projects/.../session.jsonl`` destroys the
+    only copy of a day's work, and a single mistyped path is all it takes.
+    """
+    if not target or target == "-":
+        return None
+    real = os.path.realpath(target)
+    for root in _log_dirs(home_dir):
+        if real == root or real.startswith(root + os.sep):
+            return ("refusing to write inside the session log directory\n"
+                    "  {}\n"
+                    "  agentlog never writes to the logs it reads. "
+                    "Choose a path outside them.".format(root))
+    if real.endswith(".jsonl"):
+        return ("refusing to write over {}\n"
+                "  that is a session log, not an output file.".format(target))
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
 
@@ -283,6 +331,31 @@ def main(argv=None) -> int:
 
     home_dir = args.home or os.environ.get("AGENTLOG_HOME") or None
 
+    # A word after a command that takes none is a typo, not a no-op.
+    if args.arg is not None and args.command not in _COMMANDS_WITH_ARG:
+        print(
+            "agentlog: '{}' accepts no extra argument (got '{}')\n"
+            "  try: agentlog {} | agentlog since {} | agentlog show ID".format(
+                args.command, args.arg, args.command, args.arg),
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.limit < 1:
+        print(
+            "agentlog: --limit must be 1 or more (got {})\n"
+            "  use --all to show every session".format(args.limit),
+            file=sys.stderr,
+        )
+        return 2
+
+    for flag, target in (("--html", args.html), ("--md", args.md)):
+        if target:
+            reason = _refuses_to_write(target, home_dir)
+            if reason:
+                print("agentlog: {} {}".format(flag, reason), file=sys.stderr)
+                return 2
+
     # ---- 'list' command ----
     if args.command == "list":
         sessions, sources = find_sessions(home_dir)
@@ -296,12 +369,13 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
             return 2
-        if args.json:
-            print(render_json(sessions))
-            return 0
-        # Apply row limit
+        # The row limit is a property of the answer, not of how it is printed:
+        # --json used to quietly return everything.
         limit = None if getattr(args, "all", False) else args.limit
         truncated = sessions if limit is None else sessions[:limit]
+        if args.json:
+            print(render_json(truncated))
+            return 0
         print(render_list(truncated))
         if limit is not None and len(sessions) > limit:
             print(f"... and {len(sessions) - limit} more  (use --all to see everything)")
