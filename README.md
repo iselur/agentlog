@@ -11,14 +11,15 @@ The primary deliverable is `--html`: a self-contained HTML file you can drop in 
 ## 30-second quickstart
 
 ```sh
-# Run from source (no install needed):
-cd /path/to/agentlog
-python3 -m agentlog today
-
-# Or install for the current user:
-pip install --user .
+pip install agentlog-tool     # the command is `agentlog`
 agentlog today
+
+# Or run from a checkout, no install needed — it is stdlib only:
+cd /path/to/agentlog && python3 -m agentlog today
 ```
+
+(The PyPI name is `agentlog-tool` because `agent-log` was already taken. The
+command, the module, and the repo are all just `agentlog`.)
 
 **Real output (2026-08-02, this machine):**
 

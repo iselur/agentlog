@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentlog"
+name = "agentlog-tool"
 version = "0.1.0"
 description = "A local, offline digest of your coding-agent sessions. Zero dependencies."
 readme = "README.md"
