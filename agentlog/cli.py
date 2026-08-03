@@ -9,6 +9,10 @@ Commands
   agentlog list                  # recent sessions, compact table (default 50)
   agentlog list --all            # all sessions
 
+View flags (time commands)
+  --sessions                     # per-session view instead of the digest
+  --project NAME                 # only projects matching NAME
+
 Output flags (may be combined with any time command)
   --html FILE                    # write self-contained HTML digest
   --md [FILE]                    # Markdown (to FILE or stdout)
@@ -37,7 +41,14 @@ from typing import Dict, List, Optional
 
 from . import __version__
 from .parser import find_sessions
-from .render import render_json, render_list, render_markdown, render_show, render_text
+from .render import (
+    render_digest,
+    render_json,
+    render_list,
+    render_markdown,
+    render_show,
+    render_text,
+)
 from .html import render_html
 
 
@@ -121,6 +132,8 @@ def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
     reads: List[str] = []
     writes: List[str] = []
     cmds: List[str] = []
+    write_counts: Dict[str, int] = {}
+    failed: List[str] = []
     turns = 0
     errors = 0
     for ts, kind, value in events:
@@ -130,13 +143,19 @@ def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
             turns += 1
         elif kind == "error":
             errors += 1
-        elif kind in seen and value not in seen[kind]:
-            seen[kind].add(value)
-            {"read": reads, "write": writes, "cmd": cmds}[kind].append(value)
+            failed.append(value)
+        else:
+            if kind == "write":
+                write_counts[value] = write_counts.get(value, 0) + 1
+            if kind in seen and value not in seen[kind]:
+                seen[kind].add(value)
+                {"read": reads, "write": writes, "cmd": cmds}[kind].append(value)
 
     s["files_read"] = reads
     s["files_written"] = writes
     s["commands"] = cmds
+    s["write_counts"] = write_counts
+    s["failed_cmds"] = failed
     s["user_turns"] = turns
     s["errors"] = errors
 
@@ -176,6 +195,17 @@ def _filter_sessions(
             _clip_counts(s, clipped_start, clipped_end)
         out.append(s)
     return out
+
+
+def _filter_project(sessions: List[Dict], needle: str) -> List[Dict]:
+    """Keep sessions whose project name or path contains ``needle``."""
+    low = needle.lower()
+    return [
+        s
+        for s in sessions
+        if low in (s.get("project_name") or "").lower()
+        or low in (s.get("project") or "").lower()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +252,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="write Markdown to FILE (or stdout if FILE omitted)",
     )
     p.add_argument("--json", action="store_true", help="print JSON to stdout")
+    p.add_argument(
+        "--sessions",
+        action="store_true",
+        help="list every session instead of the per-project digest",
+    )
+    p.add_argument(
+        "--project",
+        metavar="NAME",
+        help="only include projects whose name or path contains NAME",
+    )
     p.add_argument("--all", action="store_true", help="list: show all sessions (no row limit)")
     p.add_argument("--limit", type=int, default=50, metavar="N", help="list: max rows to show (default 50)")
     p.add_argument("--verbose", action="store_true", help="show parsing diagnostics")
@@ -335,6 +375,8 @@ def main(argv=None) -> int:
         return 0
 
     filtered = _filter_sessions(sessions, since=since_dt, until=until_dt)
+    if args.project:
+        filtered = _filter_project(filtered, args.project)
 
     # ---- HTML output ----
     if args.html:
@@ -370,11 +412,17 @@ def main(argv=None) -> int:
     if not args.html and args.md is None:
         if not filtered:
             when = period_label
+            # Naming the filter matters: an empty result with a --project flag
+            # usually means the name was misspelled, not that nothing happened.
+            if args.project:
+                when += f" · project matching '{args.project}'"
             print(f"no sessions found for: {when}")
             if args.verbose:
                 print(f"  searched {len(sessions)} total sessions")
-        else:
+        elif args.sessions:
             print(render_text(filtered, verbose=args.verbose))
+        else:
+            print(render_digest(filtered, period_label, verbose=args.verbose))
 
     return 0
 

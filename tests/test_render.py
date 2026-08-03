@@ -9,7 +9,12 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agentlog.render import (
+    _busiest_hour,
+    _cmd_headline,
     _fmt_duration,
+    _relative_path,
+    group_by_project,
+    render_digest,
     render_json,
     render_list,
     render_markdown,
@@ -193,3 +198,300 @@ class TestRenderJson(unittest.TestCase):
         result = render_json([sess])
         data = json.loads(result)
         self.assertIsNone(data[0]["start"])
+
+
+class TestCmdHeadline(unittest.TestCase):
+    """A failing command has to be recognisable in one line."""
+
+    def test_single_line_passes_through(self):
+        self.assertEqual(_cmd_headline("git status"), "git status")
+
+    def test_multi_line_keeps_first_line_and_marks_it(self):
+        head = _cmd_headline("python3 - <<'EOF'\nimport os\nprint(1)\nEOF")
+        self.assertEqual(head, "python3 - <<'EOF' …")
+
+    def test_blank_leading_lines_are_skipped(self):
+        self.assertEqual(_cmd_headline("\n\n  make test  "), "make test")
+
+    def test_long_line_is_truncated(self):
+        head = _cmd_headline("x" * 200, width=10)
+        self.assertEqual(head, "x" * 10 + "…")
+
+    def test_empty_command(self):
+        self.assertEqual(_cmd_headline("   \n  "), "")
+
+
+class TestRelativePath(unittest.TestCase):
+
+    def test_path_inside_project_is_relative(self):
+        self.assertEqual(
+            _relative_path("/home/test/proj/src/app.py", "/home/test/proj"),
+            "src/app.py",
+        )
+
+    def test_trailing_slash_on_root(self):
+        self.assertEqual(
+            _relative_path("/home/test/proj/a.py", "/home/test/proj/"), "a.py"
+        )
+
+    def test_path_outside_project_falls_back_to_basename(self):
+        self.assertEqual(_relative_path("/etc/hosts", "/home/test/proj"), "hosts")
+
+    def test_long_relative_path_is_shortened_to_last_two_parts(self):
+        rel = _relative_path("/p/" + "a/" * 20 + "deep/file.py", "/p")
+        self.assertEqual(rel, ".../deep/file.py")
+
+    def test_long_single_component_is_kept(self):
+        rel = _relative_path("/p/" + "n" * 50, "/p", width=10)
+        self.assertEqual(rel, "n" * 50)
+
+
+class TestBusiestHour(unittest.TestCase):
+
+    def _sess_with_events(self, hours):
+        events = [
+            (datetime(2026, 7, 16, h, 0, tzinfo=timezone.utc).astimezone(), "cmd", "x")
+            for h in hours
+        ]
+        return _make_session(events=events)
+
+    def test_none_without_events(self):
+        self.assertIsNone(_busiest_hour([_make_session()]))
+
+    def test_picks_the_fullest_hour(self):
+        sess = self._sess_with_events([9, 14, 14, 14, 20])
+        hour = _busiest_hour([sess])
+        expected = datetime(2026, 7, 16, 14, 0, tzinfo=timezone.utc).astimezone().hour
+        self.assertEqual(hour, f"{expected:02d}:00–{(expected + 1) % 24:02d}:00")
+
+    def test_turn_events_do_not_count(self):
+        ts = datetime(2026, 7, 16, 3, 0, tzinfo=timezone.utc).astimezone()
+        sess = _make_session(events=[(ts, "turn", ""), (ts, "turn", "")])
+        self.assertIsNone(_busiest_hour([sess]))
+
+
+class TestGroupByProject(unittest.TestCase):
+
+    def test_sessions_in_the_same_project_merge(self):
+        a = _make_session(id="a", commands=["one"], errors=1)
+        b = _make_session(id="b", commands=["two", "three"], errors=2)
+        groups = group_by_project([a, b])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["name"], "myproject")
+        self.assertEqual(groups[0]["sessions"], [a, b])
+        self.assertEqual(groups[0]["commands"], 3)
+        self.assertEqual(groups[0]["errors"], 3)
+
+    def test_busiest_project_comes_first(self):
+        quiet = _make_session(
+            project="/p/quiet",
+            project_name="quiet",
+            start=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 10, 5, tzinfo=timezone.utc),
+        )
+        busy = _make_session(
+            project="/p/busy",
+            project_name="busy",
+            start=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 13, 0, tzinfo=timezone.utc),
+        )
+        names = [g["name"] for g in group_by_project([quiet, busy])]
+        self.assertEqual(names, ["busy", "quiet"])
+
+    def test_files_are_deduplicated_across_sessions(self):
+        a = _make_session(id="a", files_written=["/p/x.py", "/p/y.py"])
+        b = _make_session(id="b", files_written=["/p/x.py"])
+        self.assertEqual(group_by_project([a, b])[0]["files"], 2)
+
+    def test_top_files_rank_by_edit_count(self):
+        sess = _make_session(
+            files_written=["/home/test/myproject/rare.py", "/home/test/myproject/hot.py"],
+            write_counts={
+                "/home/test/myproject/rare.py": 1,
+                "/home/test/myproject/hot.py": 7,
+            },
+        )
+        top = group_by_project([sess])[0]["top_files"]
+        self.assertEqual(top[0], "/home/test/myproject/hot.py")
+
+    def test_files_written_are_used_when_write_counts_is_absent(self):
+        sess = _make_session(files_written=["/p/a.py", "/p/b.py"])
+        top = group_by_project([sess])[0]["top_files"]
+        self.assertEqual(sorted(top), ["/p/a.py", "/p/b.py"])
+
+    def test_failed_commands_are_counted(self):
+        a = _make_session(id="a", failed_cmds=["make", "make", ""])
+        b = _make_session(id="b", failed_cmds=["make", "pytest"])
+        top = group_by_project([a, b])[0]["top_failed"]
+        self.assertEqual(top, [("make", 3), ("pytest", 1)])
+
+
+class TestRenderDigest(unittest.TestCase):
+
+    def test_empty(self):
+        self.assertIn("nothing recorded", render_digest([]))
+
+    def test_headline_names_the_period_and_project_count(self):
+        out = render_digest([_make_session()], "week")
+        self.assertIn("1 project ", out)
+        self.assertIn("the last 7 days", out)
+
+    def test_project_row_lists_stats(self):
+        out = render_digest([_make_session(errors=2)])
+        self.assertIn("myproject", out)
+        self.assertIn("1 file", out)
+        self.assertIn("2 commands", out)
+        self.assertIn("2 errors", out)
+
+    def test_quiet_project_says_so_instead_of_printing_zeroes(self):
+        out = render_digest(
+            [_make_session(files_written=[], commands=[], errors=0)]
+        )
+        self.assertIn("no edits or commands recorded", out)
+        self.assertNotIn("0 commands", out)
+
+    def test_edited_files_are_shown_relative_to_the_project(self):
+        out = render_digest([_make_session()])
+        self.assertIn("edited   src/app.py", out)
+
+    def test_failed_commands_are_named(self):
+        out = render_digest([_make_session(failed_cmds=["python3 -m pytest"])])
+        self.assertIn("failed   python3 -m pytest", out)
+
+    def test_identical_headlines_collapse_with_a_count(self):
+        sess = _make_session(
+            failed_cmds=["python3 - <<'EOF'\nimport a\nEOF", "python3 - <<'EOF'\nimport b\nEOF"]
+        )
+        out = render_digest([sess])
+        self.assertIn("python3 - <<'EOF' …  (2x)", out)
+        self.assertEqual(out.count("python3 - <<'EOF'"), 1)
+
+    def test_at_most_three_failures_per_project(self):
+        sess = _make_session(failed_cmds=[f"cmd{i}" for i in range(9)])
+        out = render_digest([sess])
+        self.assertEqual(sum(1 for ln in out.splitlines() if "cmd" in ln), 3)
+
+    def test_project_list_is_capped(self):
+        sessions = [
+            _make_session(id=str(i), project=f"/p/{i}", project_name=f"p{i}")
+            for i in range(5)
+        ]
+        out = render_digest(sessions, max_projects=2)
+        self.assertIn("… and 3 more projects", out)
+
+    def test_footer_counts_sessions_by_source(self):
+        out = render_digest([_make_session(id="a"), _make_session(id="b", source="codex")])
+        self.assertIn("2 sessions", out)
+        self.assertIn("1 claude, 1 codex", out)
+
+    def test_single_source_is_not_broken_out(self):
+        out = render_digest([_make_session()])
+        self.assertIn("1 session", out)
+        self.assertNotIn("1 claude", out)
+
+    def test_overlap_note_appears_when_projects_run_in_parallel(self):
+        a = _make_session(id="a", project="/p/a", project_name="a")
+        b = _make_session(id="b", project="/p/b", project_name="b")
+        self.assertIn("projects overlap", render_digest([a, b]))
+
+    def test_no_overlap_note_when_projects_ran_back_to_back(self):
+        a = _make_session(
+            id="a",
+            project="/p/a",
+            project_name="a",
+            start=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+        )
+        b = _make_session(
+            id="b",
+            project="/p/b",
+            project_name="b",
+            start=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertNotIn("projects overlap", render_digest([a, b]))
+
+    def test_verbose_reports_skipped_lines(self):
+        out = render_digest([_make_session(skipped_lines=4)], verbose=True)
+        self.assertIn("skipped 4 unparseable lines", out)
+
+    def test_no_message_text_leaks(self):
+        out = render_digest([_make_session(ai_title="fix the auth bug")])
+        self.assertNotIn("fix the auth bug", out)
+
+
+class TestGroupedDocuments(unittest.TestCase):
+    """Markdown and HTML follow the terminal view: project first."""
+
+    def _two_projects(self):
+        a = _make_session(
+            id="a1", project="/p/alpha", project_name="alpha",
+            start=datetime(2026, 7, 16, 10, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 10, 10, tzinfo=timezone.utc),
+        )
+        b = _make_session(
+            id="b1", project="/p/beta", project_name="beta",
+            start=datetime(2026, 7, 16, 11, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 7, 16, 14, 0, tzinfo=timezone.utc),
+        )
+        return [a, b]
+
+    def test_markdown_has_one_heading_per_project(self):
+        md = render_markdown(self._two_projects())
+        self.assertEqual(md.count("## alpha"), 1)
+        self.assertEqual(md.count("## beta"), 1)
+
+    def test_markdown_puts_the_busiest_project_first(self):
+        md = render_markdown(self._two_projects())
+        self.assertLess(md.index("## beta"), md.index("## alpha"))
+
+    def test_markdown_sessions_sit_under_their_project(self):
+        md = render_markdown(self._two_projects())
+        self.assertIn("### `", md)
+        self.assertLess(md.index("## beta"), md.index("### `"))
+
+    def test_markdown_project_line_carries_the_stats(self):
+        md = render_markdown([_make_session(errors=3)])
+        self.assertIn("1 file", md)
+        self.assertIn("2 commands", md)
+        self.assertIn("3 errors", md)
+
+    def test_markdown_two_sessions_in_one_project_share_a_heading(self):
+        a = _make_session(id="a1")
+        b = _make_session(id="b1")
+        md = render_markdown([a, b])
+        self.assertEqual(md.count("## myproject"), 1)
+        self.assertEqual(md.count("### `"), 2)
+
+    def test_html_has_a_project_section_per_project(self):
+        from agentlog.html import render_html
+        page = render_html(self._two_projects(), ["claude"], "today")
+        self.assertEqual(page.count('class="project-header"'), 2)
+        self.assertLess(page.index(">beta<"), page.index(">alpha<"))
+
+    def test_html_is_self_contained(self):
+        from agentlog.html import render_html
+        page = render_html(self._two_projects(), ["claude"], "today")
+        for scheme in ("http://", "https://cdn", "<script"):
+            if scheme == "http://":
+                continue
+            self.assertNotIn(scheme, page)
+        self.assertIn("<style>", page)
+
+    def test_html_reports_the_running_version(self):
+        from agentlog import __version__
+        from agentlog.html import render_html
+        page = render_html([_make_session()], ["claude"], "today")
+        self.assertIn(__version__, page)
+
+    def test_html_escapes_project_names(self):
+        from agentlog.html import render_html
+        sess = _make_session(project="/p/<script>", project_name="<script>")
+        page = render_html([sess], ["claude"], "today")
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+    def test_html_with_no_sessions(self):
+        from agentlog.html import render_html
+        page = render_html([], [], "today")
+        self.assertIn("No sessions found", page)

@@ -25,6 +25,10 @@ echo "--- agentlog today ---"
 agentlog today
 echo ""
 
+echo "--- agentlog today --sessions (first 12 lines) ---"
+agentlog today --sessions | head -12
+echo ""
+
 echo "--- agentlog list (first 10 lines) ---"
 agentlog list | head -10
 echo ""

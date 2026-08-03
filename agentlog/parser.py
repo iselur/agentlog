@@ -16,9 +16,13 @@ duration_s    float | None    — (end - start).total_seconds(), or None
 models        list[str]       — unique model names observed
 user_turns    int             — number of user-turn records
 files_read    list[str]       — file paths from Read tool calls
-files_written list[str]       — file paths from Write/Edit/MultiEdit calls
-commands      list[str]       — shell commands from Bash / exec_command calls
-errors        int             — count of tool_result is_error records
+files_written list[str]       — file paths from Write/Edit/MultiEdit calls,
+                                and from Codex apply_patch envelopes
+commands      list[str]       — shell commands from Bash / exec_command /
+                                apply_patch calls
+errors        int             — count of tool_result is_error records, plus
+                                Codex commands that exited non-zero
+failed_cmds   list[str]       — the commands those errors came from
 tokens_in     int | None      — sum of input_tokens across assistant turns
 tokens_out    int | None      — sum of output_tokens across assistant turns
 ai_title      str | None      — auto-generated session title (Claude only)
@@ -76,6 +80,8 @@ def _empty_session(session_id: str, source: str) -> Dict:
         "files_written": [],
         "commands": [],
         "errors": 0,
+        "failed_cmds": [],
+        "write_counts": {},
         "tokens_in": None,
         "tokens_out": None,
         "ai_title": None,
@@ -125,6 +131,9 @@ def parse_claude_session(path: str) -> Optional[Dict]:
 
     seen_tool_ids: set = set()
     seen_msg_ids: set = set()
+    # tool_use id -> a short label for what that call did, so a failure can be
+    # reported as the command that failed rather than as an anonymous count.
+    tool_labels: Dict[str, str] = {}
     tok_in = 0
     tok_out = 0
     files_read: List[str] = []
@@ -170,7 +179,9 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     and item.get("is_error")
                 ):
                     s["errors"] += 1
-                    s["events"].append((ts, "error", ""))
+                    label = tool_labels.get(item.get("tool_use_id", ""), "")
+                    s["failed_cmds"].append(label)
+                    s["events"].append((ts, "error", label))
             s["events"].append((ts, "turn", ""))
 
         elif record_type == "assistant":
@@ -205,14 +216,20 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                 if name == "Read" and fp:
                     files_read.append(fp)
                     s["events"].append((ts, "read", fp))
+                    tool_labels[tool_id] = f"read {os.path.basename(fp)}"
                 elif name in _CLAUDE_WRITE_TOOLS and fp:
                     files_written.append(fp)
+                    s["write_counts"][fp] = s["write_counts"].get(fp, 0) + 1
                     s["events"].append((ts, "write", fp))
+                    tool_labels[tool_id] = f"edit {os.path.basename(fp)}"
                 elif name == "Bash":
                     cmd = inp.get("command", "")
                     if cmd:
                         commands.append(cmd)
                         s["events"].append((ts, "cmd", cmd))
+                        tool_labels[tool_id] = cmd
+                elif name:
+                    tool_labels[tool_id] = name
 
         elif record_type == "ai-title":
             s["ai_title"] = obj.get("aiTitle")
@@ -255,6 +272,38 @@ def _decode_claude_path(jsonl_path: str) -> str:
 # Codex parser
 # ---------------------------------------------------------------------------
 
+# Calls that represent work done on the machine.  Everything else Codex emits
+# (update_plan, spawn_agent, wait, send_message) is coordination, not activity.
+_CODEX_WORK_CALLS = {"exec_command", "apply_patch"}
+
+_PATCH_MARKERS = ("*** Update File:", "*** Add File:", "*** Delete File:")
+
+
+def _patched_files(text: str) -> List[str]:
+    """File paths named in an apply_patch envelope.
+
+    Codex has no structured file-write field: it edits by piping an envelope
+    like ``*** Update File: src/app.py`` through the shell, so the only record
+    of which file changed is the command text itself.  Scanning for the marker
+    lines recovers it.  Paths are returned in the order they appear.
+    """
+    if not text or "*** " not in text:
+        return []
+    out: List[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        for marker in _PATCH_MARKERS:
+            if line.startswith(marker):
+                path = line[len(marker):].strip()
+                # Envelopes embedded in quoted shell strings pick up a trailing
+                # quote or backslash from the surrounding literal.
+                path = path.strip("'\"").rstrip("\\").strip()
+                if path:
+                    out.append(path)
+                break
+    return out
+
+
 def parse_codex_session(path: str) -> Optional[Dict]:
     """Parse one Codex JSONL file.  Returns a session dict or None."""
     # Filename pattern: rollout-DATE-SESSION_ID.jsonl
@@ -271,6 +320,9 @@ def parse_codex_session(path: str) -> Optional[Dict]:
     tok_in = 0
     tok_out = 0
     commands: List[str] = []
+    files_written: List[str] = []
+    # call_id -> command, so a non-zero exit names the command that failed
+    call_cmds: Dict[str, str] = {}
 
     for raw in lines:
         raw = raw.strip()
@@ -327,23 +379,50 @@ def parse_codex_session(path: str) -> Optional[Dict]:
 
         elif record_type == "response_item":
             pt = payload.get("type", "")
-            if pt == "function_call" and payload.get("name") == "exec_command":
+            if pt == "function_call" and payload.get("name") in _CODEX_WORK_CALLS:
                 args_str = payload.get("arguments", "{}")
                 try:
                     args = json.loads(args_str)
                 except (json.JSONDecodeError, ValueError):
                     args = {}
-                cmd = args.get("cmd", "")
+                if not isinstance(args, dict):
+                    args = {}
+                # exec_command carries `cmd`; apply_patch carries either a
+                # `command` (a shell one-liner) or a `patch` envelope.
+                cmd = args.get("cmd") or args.get("command") or ""
+                patch = args.get("patch") or ""
+                if not isinstance(cmd, str):
+                    cmd = ""
+                if not isinstance(patch, str):
+                    patch = ""
                 if cmd:
                     commands.append(cmd)
                     s["events"].append((ts, "cmd", cmd))
+                    call_id = payload.get("call_id") or ""
+                    if call_id:
+                        call_cmds[call_id] = cmd
+                # Codex edits files by piping an apply_patch envelope through
+                # the shell, so the written paths are inside the command text
+                # rather than in a structured field.
+                # Envelopes name files relative to the working directory as
+                # often as absolutely; without this the same file shows up
+                # twice under two spellings.
+                root = args.get("workdir") or s["project"] or ""
+                for path in _patched_files(patch or cmd):
+                    if not os.path.isabs(path) and isinstance(root, str) and root:
+                        path = os.path.normpath(os.path.join(root, path))
+                    files_written.append(path)
+                    s["write_counts"][path] = s["write_counts"].get(path, 0) + 1
+                    s["events"].append((ts, "write", path))
             elif pt == "function_call_output":
                 output = payload.get("output") or {}
                 if isinstance(output, dict):
                     meta = output.get("metadata") or {}
                     if isinstance(meta, dict) and meta.get("exit_code", 0) not in (0, None):
                         s["errors"] += 1
-                        s["events"].append((ts, "error", ""))
+                        label = call_cmds.get(payload.get("call_id") or "", "")
+                        s["failed_cmds"].append(label)
+                        s["events"].append((ts, "error", label))
 
     if s["user_turns"] == 0 and s["start"] is None:
         return None
@@ -352,6 +431,7 @@ def parse_codex_session(path: str) -> Optional[Dict]:
     if s["start"] and s["end"]:
         s["duration_s"] = (s["end"] - s["start"]).total_seconds()
     s["commands"] = _dedup(commands)
+    s["files_written"] = _dedup(files_written)
     if tok_in > 0:
         s["tokens_in"] = tok_in
     if tok_out > 0:

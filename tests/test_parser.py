@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agentlog.parser import (
     _decode_claude_path,
     _dedup,
+    _patched_files,
     _ts,
     find_sessions,
     parse_claude_session,
@@ -514,3 +515,132 @@ class TestCodexTokenInflation(unittest.TestCase):
         self.assertEqual(sess["tokens_out"], 200)
         # Confirm it is NOT the inflated sum
         self.assertNotEqual(sess["tokens_in"], 53000)
+
+
+class TestPatchedFiles(unittest.TestCase):
+    """Codex names edited files only inside apply_patch envelope text."""
+
+    def test_update_marker(self):
+        patch = "*** Begin Patch\n*** Update File: src/app.py\n@@\n-a\n+b\n*** End Patch"
+        self.assertEqual(_patched_files(patch), ["src/app.py"])
+
+    def test_add_and_delete_markers(self):
+        patch = "*** Begin Patch\n*** Add File: a.py\n*** Delete File: b.py\n*** End Patch"
+        self.assertEqual(_patched_files(patch), ["a.py", "b.py"])
+
+    def test_envelope_embedded_in_a_shell_string(self):
+        cmd = "python3 -c \"\npatch = '''*** Begin Patch\n*** Update File: elo.py\n@@\n'''\""
+        self.assertEqual(_patched_files(cmd), ["elo.py"])
+
+    def test_trailing_quote_is_stripped(self):
+        self.assertEqual(_patched_files("*** Update File: app.py'"), ["app.py"])
+
+    def test_plain_command_has_no_files(self):
+        self.assertEqual(_patched_files("git status"), [])
+
+    def test_empty_and_marker_without_a_path(self):
+        self.assertEqual(_patched_files(""), [])
+        self.assertEqual(_patched_files("*** Update File:   "), [])
+
+    def test_diff_body_mentioning_a_marker_word_is_not_matched(self):
+        self.assertEqual(_patched_files("+ # see *** Update File docs"), [])
+
+
+class TestCodexFileTracking(unittest.TestCase):
+    """apply_patch is Codex's write path; it must show up as an edited file."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.sid = "019fd111-0000-7000-0000-000000000001"
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+
+    def _parse(self, extra_records):
+        sess_dir = os.path.join(self.tmp, ".codex", "sessions", "2026", "08", "03")
+        os.makedirs(sess_dir, exist_ok=True)
+        path = os.path.join(sess_dir, f"rollout-2026-08-03T10-00-00-{self.sid}.jsonl")
+        _write_jsonl(
+            path,
+            [
+                codex_session_meta(self.sid, "/tmp/proj", "2026-08-03T10:00:00Z"),
+                codex_user_message("2026-08-03T10:00:01Z"),
+            ]
+            + extra_records,
+        )
+        return parse_codex_session(path)
+
+    def test_apply_patch_with_a_patch_argument(self):
+        sess = self._parse([
+            codex_function_call(
+                "apply_patch",
+                {"patch": "*** Begin Patch\n*** Update File: /tmp/proj/app.py\n*** End Patch"},
+                "2026-08-03T10:00:02Z",
+            )
+        ])
+        self.assertEqual(sess["files_written"], ["/tmp/proj/app.py"])
+
+    def test_apply_patch_with_a_command_argument_is_also_a_command(self):
+        sess = self._parse([
+            codex_function_call(
+                "apply_patch", {"command": "sed -i s/a/b/ app.py"}, "2026-08-03T10:00:02Z"
+            )
+        ])
+        self.assertEqual(sess["commands"], ["sed -i s/a/b/ app.py"])
+
+    def test_exec_command_carrying_an_envelope_records_the_file(self):
+        cmd = "python3 - <<'EOF'\n*** Begin Patch\n*** Update File: lib/x.py\n*** End Patch\nEOF"
+        sess = self._parse([
+            codex_function_call("exec_command", {"cmd": cmd}, "2026-08-03T10:00:02Z")
+        ])
+        self.assertEqual(sess["files_written"], ["/tmp/proj/lib/x.py"])
+        self.assertEqual(sess["commands"], [cmd])
+
+    def test_relative_and_absolute_spellings_are_one_file(self):
+        rel = "*** Begin Patch\n*** Update File: app.py\n*** End Patch"
+        absolute = "*** Begin Patch\n*** Update File: /tmp/proj/app.py\n*** End Patch"
+        sess = self._parse([
+            codex_function_call("apply_patch", {"patch": rel}, "2026-08-03T10:00:02Z", call_id="c1"),
+            codex_function_call("apply_patch", {"patch": absolute}, "2026-08-03T10:00:03Z", call_id="c2"),
+        ])
+        self.assertEqual(sess["files_written"], ["/tmp/proj/app.py"])
+        self.assertEqual(sess["write_counts"], {"/tmp/proj/app.py": 2})
+
+    def test_workdir_overrides_the_session_cwd(self):
+        cmd = "*** Begin Patch\n*** Update File: x.py\n*** End Patch"
+        sess = self._parse([
+            codex_function_call(
+                "exec_command", {"cmd": cmd, "workdir": "/tmp/other"}, "2026-08-03T10:00:02Z"
+            )
+        ])
+        self.assertEqual(sess["files_written"], ["/tmp/other/x.py"])
+
+    def test_repeat_edits_are_counted(self):
+        patch = "*** Begin Patch\n*** Update File: app.py\n*** End Patch"
+        sess = self._parse([
+            codex_function_call("apply_patch", {"patch": patch}, "2026-08-03T10:00:02Z", call_id="c1"),
+            codex_function_call("apply_patch", {"patch": patch}, "2026-08-03T10:00:03Z", call_id="c2"),
+        ])
+        self.assertEqual(sess["files_written"], ["/tmp/proj/app.py"])
+        self.assertEqual(sess["write_counts"], {"/tmp/proj/app.py": 2})
+
+    def test_coordination_calls_are_ignored(self):
+        sess = self._parse([
+            codex_function_call("update_plan", {"plan": []}, "2026-08-03T10:00:02Z"),
+            codex_function_call("spawn_agent", {"message": "go"}, "2026-08-03T10:00:03Z"),
+        ])
+        self.assertEqual(sess["commands"], [])
+        self.assertEqual(sess["files_written"], [])
+
+    def test_malformed_arguments_do_not_crash(self):
+        rec = codex_function_call("apply_patch", {}, "2026-08-03T10:00:02Z")
+        rec["payload"]["arguments"] = "{not json"
+        sess = self._parse([rec])
+        self.assertEqual(sess["files_written"], [])
+
+    def test_non_string_arguments_do_not_crash(self):
+        rec = codex_function_call("apply_patch", {"patch": {"a": 1}, "command": 7}, "2026-08-03T10:00:02Z")
+        sess = self._parse([rec])
+        self.assertEqual(sess["files_written"], [])
+        self.assertEqual(sess["commands"], [])

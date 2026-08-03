@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 
@@ -49,6 +49,23 @@ def _truncate(items: List[str], limit: int = 6, width: int = 60) -> List[str]:
     if len(items) > limit:
         out.append(f"  ... and {len(items) - limit} more")
     return out
+
+
+def _cmd_headline(cmd: str, width: int = 56) -> str:
+    """First line of a command, marked when more lines follow.
+
+    Heredocs and inline scripts are several lines long; flattening them into
+    one run-on line is unreadable, and the first line is the identifying part.
+    """
+    lines = [ln for ln in cmd.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    head = lines[0].strip()
+    if len(head) > width:
+        head = head[:width] + "…"
+    if len(lines) > 1:
+        head += " …"
+    return head
 
 
 def _shorten_cmd(cmd: str, width: int = 72) -> str:
@@ -147,6 +164,181 @@ def summary_line(sessions: List[Dict]) -> str:
         parts.append(f"{errors} error{'s' if errors != 1 else ''}")
 
     return " · ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Digest — the default view.  Grouped by project, because "what did I work on"
+# is the question; the session list answers "what sessions exist", which is
+# not a question anybody has.
+# ---------------------------------------------------------------------------
+
+def group_by_project(sessions: List[Dict]) -> List[Dict]:
+    """Aggregate sessions into per-project groups, busiest first."""
+    groups: Dict[str, List[Dict]] = {}
+    for s in sessions:
+        key = s.get("project") or s.get("project_name") or "?"
+        groups.setdefault(key, []).append(s)
+
+    out = []
+    for path, members in groups.items():
+        writes: Dict[str, int] = {}
+        for s in members:
+            for f, n in (s.get("write_counts") or {}).items():
+                writes[f] = writes.get(f, 0) + n
+            # Sessions parsed before write counts existed still list the files.
+            if not s.get("write_counts"):
+                for f in s["files_written"]:
+                    writes.setdefault(f, 1)
+        failed: Dict[str, int] = {}
+        for s in members:
+            for cmd in s.get("failed_cmds") or []:
+                if cmd:
+                    failed[cmd] = failed.get(cmd, 0) + 1
+        out.append(
+            {
+                "path": path,
+                "name": members[0]["project_name"] or path or "?",
+                "sessions": members,
+                "seconds": active_seconds(members),
+                "files": len({f for s in members for f in s["files_written"]}),
+                "commands": sum(len(s["commands"]) for s in members),
+                "errors": sum(s["errors"] for s in members),
+                "top_files": sorted(writes, key=lambda f: (-writes[f], f)),
+                "top_failed": sorted(failed.items(), key=lambda kv: (-kv[1], kv[0])),
+            }
+        )
+    out.sort(key=lambda g: (-g["seconds"], g["name"]))
+    return out
+
+
+def _relative_path(path: str, root: str, width: int = 34) -> str:
+    """Show a file relative to its project, short enough to sit in a list."""
+    if root and path.startswith(root.rstrip("/") + "/"):
+        rel = path[len(root.rstrip("/")) + 1:]
+    else:
+        rel = os.path.basename(path) or path
+    if len(rel) > width:
+        parts = rel.split("/")
+        rel = ".../" + "/".join(parts[-2:]) if len(parts) > 2 else parts[-1]
+    return rel
+
+
+def _busiest_hour(sessions: List[Dict]) -> Optional[str]:
+    """The local hour with the most recorded activity, as 'HH:00–HH:00'."""
+    buckets: Dict[int, int] = {}
+    for s in sessions:
+        for ts, kind, _value in s.get("events") or []:
+            if ts is None or kind == "turn":
+                continue
+            hour = ts.astimezone().hour
+            buckets[hour] = buckets.get(hour, 0) + 1
+    if not buckets:
+        return None
+    best = max(buckets, key=lambda h: (buckets[h], -h))
+    return f"{best:02d}:00–{(best + 1) % 24:02d}:00"
+
+
+_PERIOD_PHRASE = {
+    "today": "today",
+    "yesterday": "yesterday",
+    "week": "the last 7 days",
+}
+
+
+def _period_phrase(period_label: str) -> str:
+    phrase = _PERIOD_PHRASE.get(period_label, period_label)
+    day = None
+    if period_label == "today":
+        day = datetime.now().astimezone()
+    elif period_label == "yesterday":
+        day = datetime.now().astimezone() - timedelta(days=1)
+    if day is not None:
+        # %-d is glibc-only; build the day number by hand so this works anywhere.
+        phrase += day.strftime(", %a ") + str(day.day) + day.strftime(" %b")
+    return phrase
+
+
+def render_digest(
+    sessions: List[Dict],
+    period_label: str = "today",
+    max_projects: int = 8,
+    verbose: bool = False,
+) -> str:
+    """Render the answer-first, project-grouped digest."""
+    if not sessions:
+        return f"nothing recorded {_period_phrase(period_label)}"
+
+    groups = group_by_project(sessions)
+    total = _fmt_duration(active_seconds(sessions))
+    n_proj = len(groups)
+    lines = [
+        f"{total} active across {n_proj} project{'s' if n_proj != 1 else ''}"
+        f" · {_period_phrase(period_label)}",
+        "",
+    ]
+
+    shown = groups[:max_projects]
+    name_w = min(max(max(len(g["name"]) for g in shown), 10), 24)
+    dur_w = max(len(_fmt_duration(g["seconds"])) for g in shown)
+
+    for g in shown:
+        stats = []
+        if g["files"]:
+            stats.append(f"{g['files']} file{'s' if g['files'] != 1 else ''}")
+        if g["commands"]:
+            stats.append(f"{g['commands']} command{'s' if g['commands'] != 1 else ''}")
+        if g["errors"]:
+            stats.append(f"{g['errors']} error{'s' if g['errors'] != 1 else ''}")
+        if not stats:
+            stats.append("no edits or commands recorded")
+        lines.append(
+            f"  {g['name'][:name_w].ljust(name_w)}  "
+            f"{_fmt_duration(g['seconds']).rjust(dur_w)}   " + " · ".join(stats)
+        )
+
+        if g["top_files"]:
+            names = [_relative_path(f, g["path"]) for f in g["top_files"][:3]]
+            lines.append("      edited   " + ", ".join(names))
+        # Collapse on the headline: three heredocs that differ only below
+        # their first line should read as one repeated failure, not three.
+        by_head: Dict[str, int] = {}
+        for cmd, n in g["top_failed"]:
+            head = _cmd_headline(cmd)
+            by_head[head] = by_head.get(head, 0) + n
+        ranked = sorted(by_head.items(), key=lambda kv: (-kv[1], kv[0]))
+        for i, (head, n) in enumerate(ranked[:3]):
+            label = "      failed   " if i == 0 else "               "
+            lines.append(label + head + (f"  ({n}x)" if n > 1 else ""))
+
+    if len(groups) > max_projects:
+        rest = len(groups) - max_projects
+        lines.append(f"  … and {rest} more project{'s' if rest != 1 else ''}")
+
+    lines.append("")
+
+    by_source: Dict[str, int] = {}
+    for s in sessions:
+        by_source[s.get("source") or "?"] = by_source.get(s.get("source") or "?", 0) + 1
+    tail = [f"{len(sessions)} session{'s' if len(sessions) != 1 else ''}"]
+    if len(by_source) > 1:
+        tail.append(", ".join(f"{n} {src}" for src, n in sorted(by_source.items())))
+    busiest = _busiest_hour(sessions)
+    if busiest:
+        tail.append(f"busiest {busiest}")
+    # Agents run in parallel, so per-project times can sum past the total.
+    # Say so, or the two numbers read as a bug.
+    spent = sum(g["seconds"] for g in groups)
+    lines.append("  " + " · ".join(tail))
+    if len(groups) > 1 and spent > active_seconds(sessions) * 1.15:
+        lines.append("  projects overlap — agents ran in parallel, so their times sum past the total")
+    lines.append("  more: agentlog list · agentlog show ID · agentlog --sessions")
+
+    if verbose:
+        skipped = sum(s["skipped_lines"] for s in sessions)
+        if skipped:
+            lines.append(f"  skipped {skipped} unparseable lines")
+
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -332,47 +524,69 @@ def render_markdown(sessions: List[Dict]) -> str:
     lines.append("")
 
     shorts = unique_short_ids(sessions)
-    for s in sessions:
-        short_id = shorts.get(s["id"]) or "?"
-        project = s["project_name"] or s["project"] or "?"
-        lines.append(f"## {project}  `{short_id}`")
+    # Group by project, as the terminal and HTML views do: the reader wants
+    # "what did it work on" before "which session ran when".
+    for group in group_by_project(sessions):
+        stats = [f"{_fmt_duration(group['seconds'])} active"]
+        if group["files"]:
+            stats.append(f"{group['files']} file{'s' if group['files'] != 1 else ''}")
+        if group["commands"]:
+            stats.append(f"{group['commands']} commands")
+        if group["errors"]:
+            stats.append(f"{group['errors']} errors")
+        lines.append(f"## {group['name']}")
+        lines.append("")
+        lines.append(" · ".join(stats))
         lines.append("")
 
-        when = _fmt_datetime(s["start"]) if s["start"] else "?"
-        dur = _fmt_duration(_window_duration(s))
-        lines.append(f"- **when**: {when}  ({dur})")
-        lines.append(f"- **source**: {s.get('source', '?')}")
-        if s["models"]:
-            lines.append(f"- **model**: {', '.join(s['models'])}")
-        lines.append(f"- **turns**: {s['user_turns']}  **errors**: {s['errors']}")
-        tokens = _fmt_tokens(s)
-        if tokens:
-            lines.append(f"- **tokens**: {tokens.replace('tokens — ', '')}")
-        lines.append("")
-
-        files_all = _dedup_merge(s["files_read"], s["files_written"])
-        if files_all:
-            lines.append(f"**Files** ({len(files_all)}):")
-            lines.append("```")
-            for f in files_all[:20]:
-                tag = " (read only)" if f in s["files_read"] and f not in s["files_written"] else ""
-                lines.append(f"{f}{tag}")
-            if len(files_all) > 20:
-                lines.append(f"... and {len(files_all) - 20} more")
-            lines.append("```")
-            lines.append("")
-
-        if s["commands"]:
-            lines.append(f"**Commands** ({len(s['commands'])}):")
-            lines.append("```sh")
-            for cmd in s["commands"][:20]:
-                lines.append(f"$ {_shorten_cmd(cmd)}")
-            if len(s["commands"]) > 20:
-                lines.append(f"... and {len(s['commands']) - 20} more")
-            lines.append("```")
-            lines.append("")
+        for s in group["sessions"]:
+            lines.extend(_markdown_session(s, shorts))
 
     return "\n".join(lines)
+
+
+def _markdown_session(s: Dict, shorts: Dict[str, str]) -> List[str]:
+    """The per-session block of the Markdown document."""
+    lines: List[str] = []
+    short_id = shorts.get(s["id"]) or "?"
+    lines.append(f"### `{short_id}`")
+    lines.append("")
+
+    when = _fmt_datetime(s["start"]) if s["start"] else "?"
+    dur = _fmt_duration(_window_duration(s))
+    lines.append(f"- **when**: {when}  ({dur})")
+    lines.append(f"- **source**: {s.get('source', '?')}")
+    if s["models"]:
+        lines.append(f"- **model**: {', '.join(s['models'])}")
+    lines.append(f"- **turns**: {s['user_turns']}  **errors**: {s['errors']}")
+    tokens = _fmt_tokens(s)
+    if tokens:
+        lines.append(f"- **tokens**: {tokens.replace('tokens — ', '')}")
+    lines.append("")
+
+    files_all = _dedup_merge(s["files_read"], s["files_written"])
+    if files_all:
+        lines.append(f"**Files** ({len(files_all)}):")
+        lines.append("```")
+        for f in files_all[:20]:
+            tag = " (read only)" if f in s["files_read"] and f not in s["files_written"] else ""
+            lines.append(f"{f}{tag}")
+        if len(files_all) > 20:
+            lines.append(f"... and {len(files_all) - 20} more")
+        lines.append("```")
+        lines.append("")
+
+    if s["commands"]:
+        lines.append(f"**Commands** ({len(s['commands'])}):")
+        lines.append("```sh")
+        for cmd in s["commands"][:20]:
+            lines.append(f"$ {_shorten_cmd(cmd)}")
+        if len(s["commands"]) > 20:
+            lines.append(f"... and {len(s['commands']) - 20} more")
+        lines.append("```")
+        lines.append("")
+
+    return lines
 
 
 # ---------------------------------------------------------------------------

@@ -2,9 +2,11 @@
 
 What did your coding agent actually do today?
 
-agentlog reads your local Claude Code and Codex session logs and turns them into a readable digest: which projects were touched, which files were opened or edited, which shell commands ran, how long each session took, where things broke. All offline, no network, no API key.
+agentlog reads your local Claude Code and Codex session logs and answers that in a screen: which projects it worked on, which files it edited, what failed. All offline, no network, no API key.
 
-The primary deliverable is `--html`: a self-contained HTML file you can drop in a chat or share with a teammate. It works offline, requires no server, and contains no external assets.
+Everything is organised by project, because that is the first thing you want to know. Sessions, IDs and token counts are still there — one flag away — but they are not the headline.
+
+`--html` writes the same digest as a self-contained file you can drop in a chat or share with a teammate. It works offline, requires no server, and contains no external assets.
 
 ---
 
@@ -21,31 +23,28 @@ cd /path/to/agentlog && python3 -m agentlog today
 (The PyPI name is `agentlog-tool` because `agent-log` was already taken. The
 command, the module, and the repo are all just `agentlog`.)
 
-**Real output (2026-08-02, this machine):**
+**Real output (2026-08-03, this machine):**
 
 ```
-29 sessions · 17h 09m · 5 projects · 18 files edited · 452 commands · 14 errors
+22h 45m active across 4 projects · today, Mon 3 Aug
 
-  019fc4b9  relay  [codex]
-    2026-08-02 23:05 – 23:12  (6m 18s)  1 turns
-    tokens — in: 151,757  out: 1,224
+  r102-bench          22h 43m   25 files · 143 commands · 4 errors
+      edited   parser.py, render.py, cli.py
+      failed   cd /home/val/r102-bench; echo "total:"; du -sh . 2>/dev/…
+               edit parser.py
+  val                 22h 42m   17 files · 122 commands · 8 errors
+      edited   .../.orchestrator/HANDOFF.md, .../codex-orchestrator/AGENTS.md
+      failed   cd /home/val/relay && ls .orchestrator/ && echo "=== git…
+  relay                2h 10m   no edits or commands recorded
+  codex-orchestrator   5m 07s   no edits or commands recorded
 
-  019fc4a7  relay  [codex]
-    2026-08-02 22:45 – 22:52  (6m 41s)  1 turns
-    tokens — in: 168,085  out: 2,713
-
-  4ef1361b  val  [claude]  "orchestrator migration to codex"
-    2026-08-02 13:07 – 23:18  (10h 10m)  669 turns
-    model: claude-fable-5, claude-opus-5
-    files:
-      /home/val/orchestrator/CLAUDE.md (r)
-      ... and 24 more
-    commands (433):
-      $ ls -la /home/val/orchestrator/ && which codex && codex --version 2>/dev/...
-      $ ... and 428 more
-    tokens — in: 50,603,331  out: 374,633
-    errors: 14
+  19 sessions · 6 claude, 13 codex · busiest 22:00–23:00
+  projects overlap — agents ran in parallel, so their times sum past the total
+  more: agentlog list · agentlog show ID · agentlog --sessions
 ```
+
+Busiest project first; the files are the ones written most often, and `failed`
+names the command behind each error rather than just counting them.
 
 Generate an HTML digest you can share:
 
@@ -74,6 +73,14 @@ ID        PROJECT                   WHEN              DUR       SRC
 019fc4b9  relay                     2026-08-02 23:05  6m 18s    codex
 019fc4a7  relay                     2026-08-02 22:45  6m 41s    codex
 019fc4a1  relay                     2026-08-02 22:39  4m 29s    codex
+```
+
+View flags:
+
+```
+--sessions        the old per-session view: one block per session, with IDs,
+                  models, turn counts and token totals
+--project NAME    only projects whose name or path contains NAME
 ```
 
 Output flags:
@@ -109,17 +116,22 @@ For each session it derives:
 | models | `message.model` in `assistant` records |
 | user turns | count of `type == "user"` records |
 | files read | `Read` tool-use calls (`input.file_path`) |
-| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`) |
-| commands | `Bash` tool-use calls (`input.command`); Codex `exec_command` |
-| errors | `tool_result` records with `is_error: true` |
+| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `*** Update File:` lines inside `apply_patch` envelopes |
+| commands | `Bash` tool-use calls (`input.command`); Codex `exec_command` and `apply_patch` |
+| errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code |
+| the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
 
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.
 
-The `files read` / `files written` split is specific to Claude Code.  Codex
-routes all file access through shell commands (`exec_command`), so its sessions
-report commands only.
+The read/written split is specific to Claude Code.  Codex has no structured
+file-write field — it edits by piping a patch envelope through the shell — so
+its written files are recovered from the `*** Update File:` / `*** Add File:` /
+`*** Delete File:` lines in the command text.  Relative paths are resolved
+against the call's working directory, so one file is not counted twice under two
+spellings.  Codex files it only *reads* are not distinguishable from any other
+shell command, and are not reported.
 
 ---
 
@@ -205,7 +217,7 @@ session-by-session viewers, not cross-session digest generators.
 
 ---
 
-## Honest limits (v0.1)
+## Honest limits (v0.2)
 
 **Schema drift.**  Claude Code and Codex change their log formats without
 notice.  Fields that agentlog reads today may move or disappear.  Parsing is
@@ -231,10 +243,18 @@ the files, commands, turns and errors timestamped inside Wednesday are counted,
 and the duration shown is the part that fell inside the window.  Sessions whose
 records carry no usable timestamps fall back to their lifetime totals.
 
-**Codex file tracking is limited.**  Codex routes all file access through shell
-commands (`exec_command`).  agentlog reports those commands verbatim; it does
-not parse them to extract file paths.  The `files read` / `files written`
-columns are always empty for Codex sessions.
+**Codex file tracking is partial.**  Written files are recovered from patch
+envelopes in the command text, which covers Codex's normal edit path.  A file
+changed some other way — `sed -i`, a heredoc, a script the agent wrote and then
+ran — is not detected, and files Codex only reads are never reported.  So a
+Codex project's file list is a floor, not a complete account.
+
+**The digest is a summary, and summaries drop things.**  Per project it shows
+the three most-written files and the three most frequent distinct failures, and
+it lists at most eight projects before collapsing the rest into a count.
+Failures that differ only below their first line — the same heredoc run three
+times — are collapsed into one row with a `(3x)` marker.  `--sessions`,
+`agentlog show ID` and `--json` give the unabridged version.
 
 **Tokens are not verified.**  Token counts come from usage fields in the logs.
 They may differ from what your billing provider records.

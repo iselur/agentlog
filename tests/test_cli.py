@@ -451,3 +451,186 @@ class TestWindowOverlap(unittest.TestCase):
                                since=datetime(2026, 7, 22, tzinfo=timezone.utc),
                                until=datetime(2026, 7, 23, tzinfo=timezone.utc))[0]
         self.assertEqual(out["user_turns"], 2)
+
+
+class TestDigestCLI(unittest.TestCase):
+    """The default view, its flags, and end-to-end failure attribution."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp)
+        sys.stdout = self._old_stdout
+        sys.stderr = self._old_stderr
+
+    def _run(self, argv):
+        import io
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+        code = main(argv)
+        out = sys.stdout.getvalue()
+        sys.stdout = self._old_stdout
+        sys.stderr = self._old_stderr
+        return code, out
+
+    def _ts(self, minutes_ago=5):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
+        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _claude_session(self, sid, cwd, tools=None, error_for=None):
+        from tests.fixtures import claude_assistant, claude_user_with_error
+        ts = self._ts()
+        recs = [claude_user(sid, ts, cwd=cwd)]
+        if tools:
+            recs.append(claude_assistant(sid, ts, tools=tools))
+        if error_for:
+            recs.append(claude_user_with_error(sid, ts, cwd, error_for))
+        return recs
+
+    def test_default_is_the_project_digest(self):
+        sid = "dg-000001-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha", out)
+        self.assertIn("active across", out)
+        self.assertIn("more: agentlog list", out)
+
+    def test_sessions_flag_restores_the_per_session_view(self):
+        sid = "dg-000002-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today", "--sessions"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("active across", out)
+        self.assertIn("dg-00000", out)
+
+    def test_project_flag_filters_by_name(self):
+        a = "dg-000003-0000-0000-0000-000000000001"
+        b = "dg-000004-0000-0000-0000-000000000001"
+        _setup_claude_project(
+            self.tmp,
+            [
+                self._claude_session(a, "/home/test/alpha"),
+                self._claude_session(b, "/home/test/beta"),
+            ],
+        )
+        code, out = self._run(["--home", self.tmp, "today", "--project", "alpha"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha", out)
+        self.assertNotIn("beta", out)
+
+    def test_project_flag_matches_the_path_too(self):
+        sid = "dg-000005-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today", "--project", "/home/test"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha", out)
+
+    def test_project_flag_with_no_match_is_not_an_error(self):
+        sid = "dg-000006-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today", "--project", "nope"])
+        self.assertEqual(code, 0)
+        self.assertIn("no sessions found", out)
+        self.assertIn("nope", out)
+
+    def test_claude_failure_names_the_failing_command(self):
+        sid = "dg-000007-0000-0000-0000-000000000001"
+        recs = self._claude_session(
+            sid,
+            "/home/test/alpha",
+            tools=[tool_bash("make release", tool_id="tb1")],
+            error_for="tb1",
+        )
+        _setup_claude_project(self.tmp, [recs])
+        code, out = self._run(["--home", self.tmp, "today"])
+        self.assertEqual(code, 0)
+        self.assertIn("failed   make release", out)
+
+    def test_claude_failure_on_an_edit_names_the_file(self):
+        from tests.fixtures import tool_edit
+        sid = "dg-000008-0000-0000-0000-000000000001"
+        recs = self._claude_session(
+            sid,
+            "/home/test/alpha",
+            tools=[tool_edit("/home/test/alpha/app.py", tool_id="te1")],
+            error_for="te1",
+        )
+        _setup_claude_project(self.tmp, [recs])
+        code, out = self._run(["--home", self.tmp, "today"])
+        self.assertIn("failed   edit app.py", out)
+
+    def test_codex_failure_names_the_failing_command(self):
+        from tests.fixtures import (
+            codex_function_call,
+            codex_session_meta,
+            codex_user_message,
+            make_codex_dir,
+        )
+        ts = self._ts()
+        sid = "019fc4b9-0000-7000-8000-000000000001"
+        sessions_dir = make_codex_dir(self.tmp)
+        recs = [
+            codex_session_meta(sid, "/home/test/gamma", ts),
+            codex_user_message(ts),
+            codex_function_call("exec_command", {"cmd": "cargo build"}, ts, call_id="c1"),
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": {"metadata": {"exit_code": 101}},
+                },
+            },
+        ]
+        _write_jsonl(os.path.join(sessions_dir, f"rollout-{sid}.jsonl"), recs)
+        code, out = self._run(["--home", self.tmp, "today"])
+        self.assertEqual(code, 0)
+        self.assertIn("failed   cargo build", out)
+
+    def test_a_zero_exit_is_not_a_failure(self):
+        from tests.fixtures import (
+            codex_function_call,
+            codex_session_meta,
+            codex_user_message,
+            make_codex_dir,
+        )
+        ts = self._ts()
+        sid = "019fc4b9-0000-7000-8000-000000000002"
+        sessions_dir = make_codex_dir(self.tmp)
+        recs = [
+            codex_session_meta(sid, "/home/test/gamma", ts),
+            codex_user_message(ts),
+            codex_function_call("exec_command", {"cmd": "cargo build"}, ts, call_id="c1"),
+            {
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "c1",
+                    "output": {"metadata": {"exit_code": 0}},
+                },
+            },
+        ]
+        _write_jsonl(os.path.join(sessions_dir, f"rollout-{sid}.jsonl"), recs)
+        code, out = self._run(["--home", self.tmp, "today"])
+        self.assertNotIn("failed", out)
+
+    def test_json_output_carries_the_failed_commands(self):
+        sid = "dg-000009-0000-0000-0000-000000000001"
+        recs = self._claude_session(
+            sid,
+            "/home/test/alpha",
+            tools=[tool_bash("make release", tool_id="tb1")],
+            error_for="tb1",
+        )
+        _setup_claude_project(self.tmp, [recs])
+        code, out = self._run(["--home", self.tmp, "today", "--json"])
+        data = json.loads(out)
+        self.assertEqual(data[0]["failed_cmds"], ["make release"])
