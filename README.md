@@ -13,7 +13,9 @@ Everything is organised by project, because that is the first thing you want to 
 ## 30-second quickstart
 
 ```sh
-pip install agentlog-tool     # the command is `agentlog`
+pip install 'stillworks[all]'   # all four agent tools, including this one
+pip install agentlog-tool       # or just this one (the command is `agentlog`)
+
 agentlog today
 
 # Or run from a checkout, no install needed — it is stdlib only:
@@ -328,6 +330,13 @@ the point, since the thing being checked already is one.
 - [agentdiff](https://github.com/iselur/agentdiff) — see what the agent actually changed, before you merge
 - [agentlog](https://github.com/iselur/agentlog) — what did your coding agent actually do today?  ← you are here
 - [unedit](https://github.com/iselur/unedit) — a safety net for letting an agent loose on your files
+
+One install gets all four, and `stillworks tools` says which ones you have:
+
+```sh
+pip install 'stillworks[all]'
+stillworks tools
+```
 
 ## License
 
