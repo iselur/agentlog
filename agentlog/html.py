@@ -17,6 +17,8 @@ from .render import (
     _fmt_tokens,
     _dedup_merge,
     _shorten_cmd,
+    _window_duration,
+    unique_short_ids,
     summary_line,
 )
 
@@ -212,8 +214,8 @@ def _tag(name: str, content: str, **attrs) -> str:
 # Per-session card
 # ---------------------------------------------------------------------------
 
-def _render_card(s: Dict) -> str:
-    short_id = s["id"][:8] if s["id"] else "?"
+def _render_card(s: Dict, shorts: Optional[Dict[str, str]] = None) -> str:
+    short_id = (shorts or {}).get(s["id"]) or (s["id"][:8] if s["id"] else "?")
     project = s["project_name"] or s["project"] or "?"
     source = s.get("source", "")
     title = s.get("ai_title") or ""
@@ -238,7 +240,9 @@ def _render_card(s: Dict) -> str:
     when = _fmt_datetime(s["start"]) if s["start"] else "?"
     if s["end"] and s["end"] != s["start"]:
         when += " – " + _fmt_time(s["end"])
-    dur = _fmt_duration(s["duration_s"])
+    dur = _fmt_duration(_window_duration(s))
+    if s.get("window_s") is not None:
+        dur += f" in window, {_fmt_duration(s['duration_s'])} total"
     meta_items = [
         _tag("span", f"⏱ {_e(when)}  ({_e(dur)})"),
         _tag("span", f"{_e(str(s['user_turns']))} turn{'s' if s['user_turns'] != 1 else ''}"),
@@ -302,7 +306,8 @@ def render_html(
     # Build cards
     cards_html = ""
     if sessions:
-        cards_html = "\n".join(_render_card(s) for s in sessions)
+        _shorts = unique_short_ids(sessions)
+        cards_html = "\n".join(_render_card(s, _shorts) for s in sessions)
     else:
         cards_html = _tag("p", "No sessions found for this time range.", class_="muted")
 

@@ -106,20 +106,74 @@ def _until_for_period(period: str) -> Optional[datetime]:
 # Session filtering
 # ---------------------------------------------------------------------------
 
+def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
+    """Recount files, commands, turns and errors from events inside the window.
+
+    A session that ran for two weeks would otherwise contribute all of its
+    edits to every single day's digest.  Sessions parsed before events were
+    recorded (or with untimestamped records) keep their lifetime totals.
+    """
+    events = s.get("events") or []
+    if not events:
+        return
+
+    seen: Dict[str, set] = {"read": set(), "write": set(), "cmd": set()}
+    reads: List[str] = []
+    writes: List[str] = []
+    cmds: List[str] = []
+    turns = 0
+    errors = 0
+    for ts, kind, value in events:
+        if ts is None or ts < start or ts > end:
+            continue
+        if kind == "turn":
+            turns += 1
+        elif kind == "error":
+            errors += 1
+        elif kind in seen and value not in seen[kind]:
+            seen[kind].add(value)
+            {"read": reads, "write": writes, "cmd": cmds}[kind].append(value)
+
+    s["files_read"] = reads
+    s["files_written"] = writes
+    s["commands"] = cmds
+    s["user_turns"] = turns
+    s["errors"] = errors
+
+
 def _filter_sessions(
     sessions: List[Dict],
     since: Optional[datetime] = None,
     until: Optional[datetime] = None,
 ) -> List[Dict]:
+    """Keep sessions that *overlap* the window, not just those that start in it.
+
+    A session that began yesterday and is still running belongs in ``today``;
+    filtering on the start timestamp alone made long-running sessions vanish.
+    When a session extends past either edge of the window, a copy is returned
+    carrying ``window_s`` — the seconds it spent inside the window — so totals
+    reflect the period asked for rather than the session's whole lifetime.
+    """
     out = []
     for s in sessions:
-        ts = s["start"]
-        if ts is None:
+        start = s["start"]
+        if start is None:
             continue
-        if since is not None and ts < since:
+        end = s["end"] or start
+        if since is not None and end < since:
             continue
-        if until is not None and ts >= until:
+        if until is not None and start >= until:
             continue
+
+        edge = until or datetime.now(timezone.utc)
+        clipped_start = max(start, since) if since is not None else start
+        clipped_end = max(min(end, edge), clipped_start)
+        s = dict(s)
+        s["win_start"] = clipped_start
+        s["win_end"] = clipped_end
+        if clipped_start > start or clipped_end < end:
+            s["window_s"] = (clipped_end - clipped_start).total_seconds()
+            _clip_counts(s, clipped_start, clipped_end)
         out.append(s)
     return out
 

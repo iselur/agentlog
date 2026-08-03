@@ -66,6 +66,7 @@ def _empty_session(session_id: str, source: str) -> Dict:
         "source": source,
         "project": "",
         "project_name": "",
+        "events": [],
         "start": None,
         "end": None,
         "duration_s": None,
@@ -169,6 +170,8 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     and item.get("is_error")
                 ):
                     s["errors"] += 1
+                    s["events"].append((ts, "error", ""))
+            s["events"].append((ts, "turn", ""))
 
         elif record_type == "assistant":
             msg = obj.get("message") or {}
@@ -201,12 +204,15 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                 fp = inp.get("file_path", "")
                 if name == "Read" and fp:
                     files_read.append(fp)
+                    s["events"].append((ts, "read", fp))
                 elif name in _CLAUDE_WRITE_TOOLS and fp:
                     files_written.append(fp)
+                    s["events"].append((ts, "write", fp))
                 elif name == "Bash":
                     cmd = inp.get("command", "")
                     if cmd:
                         commands.append(cmd)
+                        s["events"].append((ts, "cmd", cmd))
 
         elif record_type == "ai-title":
             s["ai_title"] = obj.get("aiTitle")
@@ -304,6 +310,7 @@ def parse_codex_session(path: str) -> Optional[Dict]:
             pt = payload.get("type", "")
             if pt == "user_message":
                 s["user_turns"] += 1
+                s["events"].append((ts, "turn", ""))
             elif pt == "token_count":
                 # last_token_usage is the session's *cumulative* total at this
                 # point in the conversation — each snapshot is higher than the
@@ -329,12 +336,14 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 cmd = args.get("cmd", "")
                 if cmd:
                     commands.append(cmd)
+                    s["events"].append((ts, "cmd", cmd))
             elif pt == "function_call_output":
                 output = payload.get("output") or {}
                 if isinstance(output, dict):
                     meta = output.get("metadata") or {}
                     if isinstance(meta, dict) and meta.get("exit_code", 0) not in (0, None):
                         s["errors"] += 1
+                        s["events"].append((ts, "error", ""))
 
     if s["user_turns"] == 0 and s["start"] is None:
         return None

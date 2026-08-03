@@ -362,3 +362,92 @@ class TestMainCLI(unittest.TestCase):
         self.assertNotIn("more", out)
         rows = [l for l in out.split("\n") if l.strip() and not l.startswith(("-", "I"))]
         self.assertGreaterEqual(len(rows), 55)
+
+
+class TestWindowOverlap(unittest.TestCase):
+    """A session that spans the window must appear in it, counted fairly."""
+
+    def _spanning(self):
+        from datetime import datetime, timezone
+        return {
+            "id": "long",
+            "start": datetime(2026, 7, 20, 9, 0, tzinfo=timezone.utc),
+            "end": datetime(2026, 7, 23, 9, 0, tzinfo=timezone.utc),
+            "files_read": ["r1", "r2"],
+            "files_written": ["w1", "w2"],
+            "commands": ["c1", "c2"],
+            "user_turns": 2,
+            "errors": 2,
+            "events": [
+                (datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc), "read", "r1"),
+                (datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc), "write", "w1"),
+                (datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc), "cmd", "c1"),
+                (datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc), "turn", ""),
+                (datetime(2026, 7, 20, 10, 0, tzinfo=timezone.utc), "error", ""),
+                (datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc), "read", "r2"),
+                (datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc), "write", "w2"),
+                (datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc), "cmd", "c2"),
+                (datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc), "turn", ""),
+                (datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc), "error", ""),
+            ],
+        }
+
+    def test_session_started_before_window_is_included(self):
+        from datetime import datetime, timezone
+        since = datetime(2026, 7, 22, tzinfo=timezone.utc)
+        until = datetime(2026, 7, 23, tzinfo=timezone.utc)
+        result = _filter_sessions([self._spanning()], since=since, until=until)
+        self.assertEqual(len(result), 1, "long-running session vanished from the window")
+
+    def test_window_seconds_is_the_overlap_not_the_lifetime(self):
+        from datetime import datetime, timezone
+        since = datetime(2026, 7, 22, tzinfo=timezone.utc)
+        until = datetime(2026, 7, 23, tzinfo=timezone.utc)
+        s = _filter_sessions([self._spanning()], since=since, until=until)[0]
+        self.assertEqual(s["window_s"], 24 * 3600)
+
+    def test_counts_are_clipped_to_the_window(self):
+        from datetime import datetime, timezone
+        since = datetime(2026, 7, 22, tzinfo=timezone.utc)
+        until = datetime(2026, 7, 23, tzinfo=timezone.utc)
+        s = _filter_sessions([self._spanning()], since=since, until=until)[0]
+        self.assertEqual(s["files_read"], ["r2"])
+        self.assertEqual(s["files_written"], ["w2"])
+        self.assertEqual(s["commands"], ["c2"])
+        self.assertEqual(s["user_turns"], 1)
+        self.assertEqual(s["errors"], 1)
+
+    def test_original_session_is_not_mutated(self):
+        from datetime import datetime, timezone
+        original = self._spanning()
+        _filter_sessions([original],
+                         since=datetime(2026, 7, 22, tzinfo=timezone.utc),
+                         until=datetime(2026, 7, 23, tzinfo=timezone.utc))
+        self.assertEqual(original["user_turns"], 2)
+        self.assertEqual(original["files_written"], ["w1", "w2"])
+
+    def test_fully_contained_session_is_not_clipped(self):
+        from datetime import datetime, timezone
+        s = dict(self._spanning())
+        s["start"] = datetime(2026, 7, 22, 9, 0, tzinfo=timezone.utc)
+        s["end"] = datetime(2026, 7, 22, 10, 0, tzinfo=timezone.utc)
+        out = _filter_sessions([s],
+                               since=datetime(2026, 7, 22, tzinfo=timezone.utc),
+                               until=datetime(2026, 7, 23, tzinfo=timezone.utc))[0]
+        self.assertNotIn("window_s", out)
+        self.assertEqual(out["user_turns"], 2)
+
+    def test_session_entirely_before_window_excluded(self):
+        from datetime import datetime, timezone
+        out = _filter_sessions([self._spanning()],
+                               since=datetime(2026, 7, 24, tzinfo=timezone.utc))
+        self.assertEqual(out, [])
+
+    def test_session_without_events_keeps_lifetime_counts(self):
+        from datetime import datetime, timezone
+        s = self._spanning()
+        s["events"] = []
+        out = _filter_sessions([s],
+                               since=datetime(2026, 7, 22, tzinfo=timezone.utc),
+                               until=datetime(2026, 7, 23, tzinfo=timezone.utc))[0]
+        self.assertEqual(out["user_turns"], 2)

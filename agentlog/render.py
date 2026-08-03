@@ -63,12 +63,71 @@ def _shorten_cmd(cmd: str, width: int = 72) -> str:
 # Summary line
 # ---------------------------------------------------------------------------
 
+def unique_short_ids(sessions: List[Dict], minimum: int = 8) -> Dict[str, str]:
+    """Map each session id to the shortest prefix that is unique in this set.
+
+    Codex ids are UUIDv7: the first 8 hex characters encode only the top 32
+    bits of a millisecond timestamp, so any two sessions started within ~65
+    seconds of each other share them.  Truncating to a fixed 8 made distinct
+    sessions look like duplicates.  One width is chosen for the whole set so
+    the ``list`` table stays aligned.
+    """
+    ids = [s["id"] for s in sessions if s.get("id")]
+    if not ids:
+        return {}
+    longest = max(len(i) for i in ids)
+    width = minimum
+    while width < longest and len({i[:width] for i in ids}) < len(set(ids)):
+        width += 1
+    return {i: i[:width] for i in ids}
+
+
+def _window_duration(s: Dict) -> Optional[float]:
+    """Seconds to report for a session: its share of the window, if clipped."""
+    if s.get("window_s") is not None:
+        return s["window_s"]
+    return s["duration_s"]
+
+
+def active_seconds(sessions: List[Dict]) -> float:
+    """Wall-clock time covered by at least one session.
+
+    Sessions run concurrently — parallel Codex workers routinely overlap — so
+    summing their durations reports more hours than the day contains.  This
+    merges the intervals instead, clipped to the requested window when one was
+    applied.
+    """
+    spans = []
+    for s in sessions:
+        start = s.get("win_start") or s["start"]
+        if start is None:
+            continue
+        end = s.get("win_end") or s["end"] or start
+        if end < start:
+            end = start
+        spans.append((start, end))
+    if not spans:
+        return 0.0
+
+    spans.sort()
+    total = 0.0
+    cur_start, cur_end = spans[0]
+    for start, end in spans[1:]:
+        if start > cur_end:
+            total += (cur_end - cur_start).total_seconds()
+            cur_start, cur_end = start, end
+        elif end > cur_end:
+            cur_end = end
+    total += (cur_end - cur_start).total_seconds()
+    return total
+
+
 def summary_line(sessions: List[Dict]) -> str:
     """Return a one-line digest summary, e.g. '4 sessions · 3h 12m · 3 projects'."""
     if not sessions:
         return "0 sessions"
 
-    total_s = sum(s["duration_s"] or 0 for s in sessions)
+    total_s = active_seconds(sessions)
     projects = len({s["project"] for s in sessions if s["project"]})
     files_edited = sum(len(s["files_written"]) for s in sessions)
     cmds = sum(len(s["commands"]) for s in sessions)
@@ -103,15 +162,18 @@ def render_text(sessions: List[Dict], verbose: bool = False) -> str:
     lines.append(summary_line(sessions))
     lines.append("")
 
+    shorts = unique_short_ids(sessions)
     for s in sessions:
-        _render_session_text(s, lines, verbose=verbose)
+        _render_session_text(s, lines, verbose=verbose, shorts=shorts)
         lines.append("")
 
     return "\n".join(lines).rstrip()
 
 
-def _render_session_text(s: Dict, lines: List[str], verbose: bool = False) -> None:
-    short_id = s["id"][:8] if s["id"] else "?"
+def _render_session_text(
+    s: Dict, lines: List[str], verbose: bool = False, shorts: Optional[Dict[str, str]] = None
+) -> None:
+    short_id = (shorts or {}).get(s["id"]) or (s["id"][:8] if s["id"] else "?")
     project = s["project_name"] or s["project"] or "?"
     source_tag = f"[{s['source']}]" if s.get("source") else ""
 
@@ -120,8 +182,13 @@ def _render_session_text(s: Dict, lines: List[str], verbose: bool = False) -> No
     if s["start"]:
         time_range = _fmt_datetime(s["start"])
         if s["end"] and s["end"] != s["start"]:
-            time_range += " – " + _fmt_time(s["end"])
-    duration = _fmt_duration(s["duration_s"])
+            # A bare HH:MM end reads as running backwards when the session
+            # spans midnight, so show the full date once it does.
+            same_day = s["end"].astimezone().date() == s["start"].astimezone().date()
+            time_range += " – " + (_fmt_time(s["end"]) if same_day else _fmt_datetime(s["end"]))
+    duration = _fmt_duration(_window_duration(s))
+    if s.get("window_s") is not None:
+        duration += f" in window, {_fmt_duration(s['duration_s'])} total"
 
     title = s.get("ai_title")
     header = f"  {short_id}  {project}  {source_tag}"
@@ -188,16 +255,18 @@ def render_list(sessions: List[Dict]) -> str:
         return "no sessions found"
 
     rows = []
+    shorts = unique_short_ids(sessions)
     for s in sessions:
-        sid = s["id"][:8] if s["id"] else "?"
+        sid = shorts.get(s["id"]) or "?"
         project = (s["project_name"] or "?")[:24]
         when = _fmt_datetime(s["start"]) if s["start"] else "?"
-        dur = _fmt_duration(s["duration_s"])
+        dur = _fmt_duration(_window_duration(s))
         src = s.get("source", "?")[:6]
         rows.append((sid, project, when, dur, src))
 
-    # Column widths
-    w = [8, 24, 16, 8, 6]
+    # Column widths — the ID column grows with the prefix length needed here
+    id_w = max([8] + [len(r[0]) for r in rows])
+    w = [id_w, 24, 16, 8, 6]
     header = "  ".join(col.ljust(w[i]) for i, col in enumerate(("ID", "PROJECT", "WHEN", "DUR", "SRC")))
     sep = "  ".join("-" * width for width in w)
     lines = [header, sep]
@@ -262,14 +331,15 @@ def render_markdown(sessions: List[Dict]) -> str:
     lines.append(summary_line(sessions))
     lines.append("")
 
+    shorts = unique_short_ids(sessions)
     for s in sessions:
-        short_id = s["id"][:8] if s["id"] else "?"
+        short_id = shorts.get(s["id"]) or "?"
         project = s["project_name"] or s["project"] or "?"
         lines.append(f"## {project}  `{short_id}`")
         lines.append("")
 
         when = _fmt_datetime(s["start"]) if s["start"] else "?"
-        dur = _fmt_duration(s["duration_s"])
+        dur = _fmt_duration(_window_duration(s))
         lines.append(f"- **when**: {when}  ({dur})")
         lines.append(f"- **source**: {s.get('source', '?')}")
         if s["models"]:

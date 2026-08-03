@@ -217,9 +217,19 @@ field of the first `user` record in a session.  If a session starts before a
 `user` record is written, the project falls back to a guess derived from the
 directory name, which is ambiguous when paths contain dashes.
 
-**Wall duration is a lower bound.**  Duration is computed as (last timestamp –
-first timestamp) in each session file.  The logs do not contain a reliable
-elapsed-time field.  Idle time between tool calls is included.
+**Wall duration is elapsed time, not effort.**  A session's duration is (last
+timestamp – first timestamp) in its file; the logs contain no reliable
+elapsed-time field, so idle time between tool calls is included.  The headline
+figure for a period is the **union** of all session intervals clipped to that
+period, not their sum — agents run in parallel, and summing them produced
+"111h in a 24h day".  It therefore answers "how much of the day had an agent
+working" rather than "how many agent-hours were spent".
+
+**A session that spans the window is counted only for its share of it.**  A
+session running from Tuesday to Friday appears in Wednesday's digest, but only
+the files, commands, turns and errors timestamped inside Wednesday are counted,
+and the duration shown is the part that fell inside the window.  Sessions whose
+records carry no usable timestamps fall back to their lifetime totals.
 
 **Codex file tracking is limited.**  Codex routes all file access through shell
 commands (`exec_command`).  agentlog reports those commands verbatim; it does
