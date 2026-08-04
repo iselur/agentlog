@@ -428,6 +428,11 @@ def _patched_files(text: str) -> List[str]:
     if not text or "*** " not in text:
         return []
     out: List[str] = []
+    # An envelope built as a JavaScript string literal arrives as one physical
+    # line with its newlines still escaped, so the marker lines have to be cut
+    # apart before they can be recognised.
+    if "\\n" in text:
+        text = text.replace("\\n", "\n")
     for line in text.splitlines():
         line = line.strip()
         for marker in _PATCH_MARKERS:
@@ -461,6 +466,10 @@ def parse_codex_session(path: str) -> Optional[Dict]:
     files_written: List[str] = []
     # call_id -> command, so a non-zero exit names the command that failed
     call_cmds: Dict[str, str] = {}
+    # Files named in a patch envelope, held back in case this session turns out
+    # not to report its patches any other way.  See the fallback below.
+    envelope_writes: List[tuple] = []
+    saw_patch_end = False
 
     for raw in lines:
         raw = raw.strip()
@@ -503,6 +512,7 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 s["user_turns"] += 1
                 s["events"].append((ts, "turn", ""))
             elif pt == "patch_apply_end":
+                saw_patch_end = True
                 # The only record that says which files a patch actually
                 # changed, and the only one that admits a patch that did not
                 # apply.  Reading the envelope in the call instead would list
@@ -539,15 +549,32 @@ def parse_codex_session(path: str) -> Optional[Dict]:
             pt = _text(payload.get("type"))
             if pt == "custom_tool_call":
                 # How current Codex runs everything.  See _script_commands.
-                found = _script_commands(payload.get("input"))
+                raw_input = payload.get("input")
+                found = _script_commands(raw_input)
                 call_id = _text(payload.get("call_id"))
                 for cmd in found:
                     commands.append(cmd)
                     s["events"].append((ts, "cmd", cmd))
+                # The same call can carry a patch envelope instead of a
+                # command.  The files are remembered rather than recorded:
+                # patch_apply_end says whether the patch actually landed, and
+                # if this session sends those records it is the one to believe.
+                patched = (_patched_files(raw_input)
+                           if isinstance(raw_input, str) else [])
+                if patched:
+                    envelope_writes.append((ts, patched))
                 # The first command in a snippet is the one a failure is named
                 # after: by the time the result arrives several may have run.
-                if found and call_id and call_id not in call_cmds:
-                    call_cmds[call_id] = found[0]
+                # A patch call has no command in it at all, and an error
+                # counted under a blank name is one the reader cannot act on —
+                # the digest drops nameless failures from the list it prints
+                # while still counting them.
+                if call_id and call_id not in call_cmds:
+                    if found:
+                        call_cmds[call_id] = found[0]
+                    elif patched:
+                        call_cmds[call_id] = "patch " + ", ".join(
+                            os.path.basename(p) for p in patched[:3])
             elif pt == "custom_tool_call_output":
                 if _script_failed(payload.get("output")):
                     s["errors"] += 1
@@ -602,6 +629,24 @@ def parse_codex_session(path: str) -> Optional[Dict]:
 
     if s["user_turns"] == 0 and s["start"] is None:
         return None
+
+    # A session that never sent a patch_apply_end is from a build that does not
+    # report its own patches, so the envelope in the call is the only record of
+    # the edit and the session otherwise reads as having written nothing.  Where
+    # even one end record exists the build does report them and the envelopes
+    # are ignored — the end record knows which patches failed and the envelope
+    # does not, and listing an edit that never reached the disk is the worse
+    # error of the two, because nothing in the report contradicts it.
+    if envelope_writes and not saw_patch_end:
+        root = s["project"] or ""
+        for ts, paths in envelope_writes:
+            for path in paths:
+                if not os.path.isabs(path) and root:
+                    path = os.path.normpath(os.path.join(root, path))
+                files_written.append(path)
+                s["write_counts"][path] = s["write_counts"].get(path, 0) + 1
+                s["events"].append((ts, "write", path))
+        s["events"].sort(key=lambda e: e[0] or _EPOCH)
 
     s["project_name"] = os.path.basename(s["project"]) if s["project"] else session_id[:8]
     if s["start"] and s["end"]:

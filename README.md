@@ -147,9 +147,18 @@ The read/written split is specific to Claude Code.  Codex has no structured
 file-write field — it edits by handing a patch envelope to a patch tool — so
 its written files come from the `patch_apply_end` record, which names them
 absolutely and is also the only place a patch that *failed* is admitted.  A
-patch that did not apply is counted as an error, never as a write.  Older
-sessions with no such record fall back to the `*** Update File:` / `*** Add
-File:` / `*** Delete File:` lines in the command text.  Relative paths are resolved
+patch that did not apply is counted as an error, never as a write.
+
+Some builds never send that record: they hand the envelope to a
+`custom_tool_call` — sometimes bare, sometimes wrapped in a JavaScript string
+literal with the newlines escaped — and report nothing afterwards.  A session
+that emitted no `patch_apply_end` at all therefore falls back to the
+`*** Update File:` / `*** Add File:` / `*** Delete File:` lines in the envelope
+itself.  The fallback is decided per session, not per call: if the session sent
+even one end record, that build does report its own patches and the envelopes
+are ignored, because the end record knows which patches failed and the envelope
+does not.  Listing an edit that never reached the disk is the worse error of the
+two — nothing else in the report contradicts it.  Relative paths are resolved
 against the call's working directory, so one file is not counted twice under two
 spellings.  Codex files it only *reads* are not distinguishable from any other
 shell command, and are not reported.
@@ -305,7 +314,11 @@ Codex project's file list is a floor, not a complete account.
 the three most-written files and the three most frequent distinct failures, and
 it lists at most eight projects before collapsing the rest into a count.
 Failures that differ only below their first line — the same heredoc run three
-times — are collapsed into one row with a `(3x)` marker.  `--sessions`,
+times — are collapsed into one row with a `(3x)` marker.  A failure the parser
+could find no name for is still counted in `errors` but has no row to print, so
+the count can exceed the list.  Until v0.2.3 that was most of them: a Codex
+patch call carries no command, so every failed patch was nameless.  They are now
+labelled with the files they touched.  `--sessions`,
 `agentlog show ID` and `--json` give the unabridged version.
 
 **One item is one row.**  Everything on screen came out of a log file written
