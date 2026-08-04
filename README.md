@@ -122,8 +122,8 @@ For each session it derives:
 | models | `message.model` in `assistant` records |
 | user turns | count of `type == "user"` records |
 | files read | `Read` tool-use calls (`input.file_path`) |
-| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `*** Update File:` lines inside `apply_patch` envelopes |
-| commands | `Bash` tool-use calls (`input.command`); Codex `exec_command` and `apply_patch` |
+| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
+| commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
@@ -131,10 +131,25 @@ For each session it derives:
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.
 
+Codex has sent its work in two different shapes.  Older sessions announce each
+command as a `function_call` named `exec_command`, with the command in a
+structured field.  Current builds send a `custom_tool_call` instead: the record
+carries a snippet of JavaScript — `tools.exec_command({cmd:"pytest -x", ...})`,
+often several inside one `Promise.all` — and the command has to be read back out
+of the source.  Both are parsed.  Until v0.2.3 only the first was, which on the
+machine this was found on made 65.6% of the recorded Codex work invisible and
+left 74% of Codex sessions looking like the agent had done nothing; for the
+current month it was 98%.  Nothing failed — the sessions were listed, with no
+commands and no files under them, which is exactly what a session of pure
+conversation looks like.
+
 The read/written split is specific to Claude Code.  Codex has no structured
-file-write field — it edits by piping a patch envelope through the shell — so
-its written files are recovered from the `*** Update File:` / `*** Add File:` /
-`*** Delete File:` lines in the command text.  Relative paths are resolved
+file-write field — it edits by handing a patch envelope to a patch tool — so
+its written files come from the `patch_apply_end` record, which names them
+absolutely and is also the only place a patch that *failed* is admitted.  A
+patch that did not apply is counted as an error, never as a write.  Older
+sessions with no such record fall back to the `*** Update File:` / `*** Add
+File:` / `*** Delete File:` lines in the command text.  Relative paths are resolved
 against the call's working directory, so one file is not counted twice under two
 spellings.  Codex files it only *reads* are not distinguishable from any other
 shell command, and are not reported.
@@ -228,7 +243,11 @@ session-by-session viewers, not cross-session digest generators.
 **Schema drift.**  Claude Code and Codex change their log formats without
 notice.  Fields that agentlog reads today may move or disappear.  Parsing is
 defensive and will not crash, but some sessions may show empty file or command
-lists if the format changes.
+lists if the format changes.  That has already happened once, and is the worst
+failure this tool has: an empty list is indistinguishable from a quiet session,
+so a whole format going unread looks like the agent was idle rather than like a
+bug.  Both known Codex shapes are parsed side by side rather than one replacing
+the other, and `--verbose` names files that could not be read at all.
 
 **A log file it cannot read is named, not skipped.**  A file whose permissions
 changed, or one truncated mid-write into bytes that no longer parse, cannot
@@ -275,8 +294,9 @@ so events dated a few minutes into the future are still part of `today`; only
 `yesterday` and an explicit end actually clip.  `agentlog` never treats the
 moment you ran it as the end of a window you did not ask to end.
 
-**Codex file tracking is partial.**  Written files are recovered from patch
-envelopes in the command text, which covers Codex's normal edit path.  A file
+**Codex file tracking is partial.**  Written files come from `patch_apply_end`
+records, falling back to patch envelopes in the command text, which together
+cover Codex's normal edit path.  A file
 changed some other way — `sed -i`, a heredoc, a script the agent wrote and then
 ran — is not detected, and files Codex only reads are never reported.  So a
 Codex project's file list is a floor, not a complete account.

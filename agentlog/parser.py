@@ -17,9 +17,10 @@ models        list[str]       — unique model names observed
 user_turns    int             — number of user-turn records
 files_read    list[str]       — file paths from Read tool calls
 files_written list[str]       — file paths from Write/Edit/MultiEdit calls,
-                                and from Codex apply_patch envelopes
-commands      list[str]       — shell commands from Bash / exec_command /
-                                apply_patch calls
+                                and from Codex patch_apply_end records
+commands      list[str]       — shell commands from Bash, from Codex
+                                custom_tool_call script snippets, and from
+                                older exec_command / apply_patch calls
 errors        int             — count of tool_result is_error records, plus
                                 Codex commands that exited non-zero
 failed_cmds   list[str]       — the commands those errors came from
@@ -35,6 +36,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import stat
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -356,6 +358,61 @@ _CODEX_WORK_CALLS = {"exec_command", "apply_patch"}
 
 _PATCH_MARKERS = ("*** Update File:", "*** Add File:", "*** Delete File:")
 
+# Current Codex builds do not send arguments at all.  A `custom_tool_call`
+# carries a snippet of JavaScript — `tools.exec_command({cmd:"pytest -x",
+# workdir:"..."})`, often several of them inside a Promise.all — so the command
+# has to be read back out of the source.  The keys are unquoted there, which is
+# why this is a scan and not json.loads.
+#
+# Reading only the older `function_call` shape made 65.6% of the recorded work
+# on a real machine invisible, and 74% of Codex sessions show as having done
+# nothing at all.  A snippet that stops matching this reports nothing, which is
+# the state agentlog was already in; nothing here assumes it is well formed.
+_JS_COMMAND = re.compile(
+    r'["\']?\b(?:cmd|command)\b["\']?\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+# Said in the first line of the output and nowhere else in the record.
+_SCRIPT_FAILED = "script failed"
+
+
+def _unquote(raw: str) -> str:
+    """A JSON string body, decoded — or returned as it stands if it will not."""
+    try:
+        value = json.loads('"' + raw + '"')
+    except (json.JSONDecodeError, ValueError):
+        return raw
+    return value if isinstance(value, str) else raw
+
+
+def _script_commands(raw) -> List[str]:
+    """Every command in a script call, in the order they appear.
+
+    Every one, not the first: a Promise.all of four calls is four commands,
+    and the old shape's one-command-per-record habit is what made taking the
+    first look sufficient.
+    """
+    if not isinstance(raw, str) or not raw:
+        return []
+    out: List[str] = []
+    for found in _JS_COMMAND.findall(raw):
+        cmd = _unquote(found).strip()
+        if cmd:
+            out.append(cmd)
+    return out
+
+
+def _script_failed(output) -> bool:
+    """Did a script call come back as a failure?"""
+    if isinstance(output, str):
+        text = output
+    elif isinstance(output, list):
+        parts = [item.get("text", "") for item in output
+                 if isinstance(item, dict) and isinstance(item.get("text"), str)]
+        text = "\n".join(parts)
+    else:
+        return False
+    return text.strip()[:40].lower().startswith(_SCRIPT_FAILED)
+
 
 def _patched_files(text: str) -> List[str]:
     """File paths named in an apply_patch envelope.
@@ -442,6 +499,25 @@ def parse_codex_session(path: str) -> Optional[Dict]:
             if pt == "user_message":
                 s["user_turns"] += 1
                 s["events"].append((ts, "turn", ""))
+            elif pt == "patch_apply_end":
+                # The only record that says which files a patch actually
+                # changed, and the only one that admits a patch that did not
+                # apply.  Reading the envelope in the call instead would list
+                # edits that never reached the disk.  Paths here are absolute.
+                changes = payload.get("changes")
+                paths = sorted(changes) if isinstance(changes, dict) else []
+                if payload.get("success", True):
+                    for path in paths:
+                        files_written.append(path)
+                        s["write_counts"][path] = \
+                            s["write_counts"].get(path, 0) + 1
+                        s["events"].append((ts, "write", path))
+                else:
+                    names = ", ".join(os.path.basename(p) for p in paths[:3])
+                    label = "patch did not apply" + (": " + names if names else "")
+                    s["errors"] += 1
+                    s["failed_cmds"].append(label)
+                    s["events"].append((ts, "error", label))
             elif pt == "token_count":
                 # last_token_usage is the session's *cumulative* total at this
                 # point in the conversation — each snapshot is higher than the
@@ -458,7 +534,24 @@ def parse_codex_session(path: str) -> Optional[Dict]:
 
         elif record_type == "response_item":
             pt = _text(payload.get("type"))
-            if pt == "function_call" and payload.get("name") in _CODEX_WORK_CALLS:
+            if pt == "custom_tool_call":
+                # How current Codex runs everything.  See _script_commands.
+                found = _script_commands(payload.get("input"))
+                call_id = _text(payload.get("call_id"))
+                for cmd in found:
+                    commands.append(cmd)
+                    s["events"].append((ts, "cmd", cmd))
+                # The first command in a snippet is the one a failure is named
+                # after: by the time the result arrives several may have run.
+                if found and call_id and call_id not in call_cmds:
+                    call_cmds[call_id] = found[0]
+            elif pt == "custom_tool_call_output":
+                if _script_failed(payload.get("output")):
+                    s["errors"] += 1
+                    label = call_cmds.get(_text(payload.get("call_id")), "")
+                    s["failed_cmds"].append(label)
+                    s["events"].append((ts, "error", label))
+            elif pt == "function_call" and payload.get("name") in _CODEX_WORK_CALLS:
                 args_str = payload.get("arguments")
                 if not isinstance(args_str, str):
                     args_str = "{}"
