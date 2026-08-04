@@ -245,6 +245,13 @@ the files, commands, turns and errors timestamped inside Wednesday are counted,
 and the duration shown is the part that fell inside the window.  Sessions whose
 records carry no usable timestamps fall back to their lifetime totals.
 
+**Two clocks are involved, and the log's wins.**  The timestamps come from
+whichever machine wrote the log, which may be ahead of the one reading it — an
+NTP step, a resumed VM, a synced home directory.  A named day runs to midnight,
+so events dated a few minutes into the future are still part of `today`; only
+`yesterday` and an explicit end actually clip.  `agentlog` never treats the
+moment you ran it as the end of a window you did not ask to end.
+
 **Codex file tracking is partial.**  Written files are recovered from patch
 envelopes in the command text, which covers Codex's normal edit path.  A file
 changed some other way — `sed -i`, a heredoc, a script the agent wrote and then

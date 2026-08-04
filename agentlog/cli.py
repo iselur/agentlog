@@ -116,11 +116,21 @@ def _since_for_period(period: str) -> Optional[datetime]:
 
 
 def _until_for_period(period: str) -> Optional[datetime]:
-    """Return the exclusive end-of-window datetime for 'yesterday', None otherwise."""
+    """The exclusive end of a named window, or None if it has no end.
+
+    A named day ends when the day ends, not when you happened to run this.
+    `today` runs to midnight tonight — the alternative is that a log written by
+    a clock two minutes fast falls outside "today", which is not what anyone
+    means by the word.  `since 3d` genuinely has no end, so it gets None.
+    """
+    today = _today_local()
     if period == "yesterday":
-        today = _today_local()
-        return datetime(today.year, today.month, today.day, tzinfo=_LOCAL)
-    return None
+        end = today
+    elif period in ("today", "week"):
+        end = today + timedelta(days=1)
+    else:
+        return None
+    return datetime(end.year, end.month, end.day, tzinfo=_LOCAL)
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +204,15 @@ def _filter_sessions(
         if until is not None and start >= until:
             continue
 
-        edge = until or datetime.now(timezone.utc)
+        # Only an asked-for edge clips.  `now` used to stand in when there was
+        # no `until`, which is a no-op on every log written in the past and a
+        # wrecking ball on one written by a clock that runs ahead: the window
+        # collapsed to the instant the session started, so a full day reported
+        # as `0s active` and one turn.  Two clocks are involved in reading
+        # somebody else's log, and they do not agree.
         clipped_start = max(start, since) if since is not None else start
-        clipped_end = max(min(end, edge), clipped_start)
+        clipped_end = max(end if until is None else min(end, until),
+                          clipped_start)
         s = dict(s)
         s["win_start"] = clipped_start
         s["win_end"] = clipped_end
