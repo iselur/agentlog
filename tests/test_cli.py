@@ -400,11 +400,19 @@ class TestWindowOverlap(unittest.TestCase):
         self.assertEqual(len(result), 1, "long-running session vanished from the window")
 
     def test_window_seconds_is_the_overlap_not_the_lifetime(self):
+        # This used to assert the full 24h — the width of the window itself.
+        # That was the overnight bug: everything inside this fixture's window
+        # happened at one instant, 10:00, and reporting a day of activity for
+        # it is how one command at 09:16 headlined as `9h 16m active`.  The
+        # test's point stands and is asserted below: not the lifetime.  Its
+        # number was the old approximation, and the honest bound is the first
+        # and last event that actually landed inside.
         from datetime import datetime, timezone
         since = datetime(2026, 7, 22, tzinfo=timezone.utc)
         until = datetime(2026, 7, 23, tzinfo=timezone.utc)
         s = _filter_sessions([self._spanning()], since=since, until=until)[0]
-        self.assertEqual(s["window_s"], 24 * 3600)
+        self.assertEqual(s["window_s"], 0.0)
+        self.assertLess(s["window_s"], 3 * 24 * 3600, "the lifetime came back")
 
     def test_counts_are_clipped_to_the_window(self):
         from datetime import datetime, timezone

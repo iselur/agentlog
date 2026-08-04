@@ -128,7 +128,12 @@ class TestTheWindowsThatDoHaveAnEnd(unittest.TestCase):
             since=datetime(2026, 7, 21, tzinfo=timezone.utc),
             until=datetime(2026, 7, 22, tzinfo=timezone.utc))[0]
         self.assertEqual(got["commands"], ["in"])
-        self.assertEqual(got["window_s"], 24 * 3600)
+        # One command inside this day, at one instant, so no time passed
+        # between the first thing that happened and the last.  This asserted
+        # the window's own width until the overnight fix; see the note in
+        # `test_cli.test_window_seconds_is_the_overlap_not_the_lifetime`.
+        self.assertEqual(got["window_s"], 0.0)
+        self.assertLess(got["window_s"], 4 * 24 * 3600, "the lifetime came back")
 
     def test_a_session_wholly_after_the_end_is_still_dropped(self):
         s = {"id": "later",

@@ -246,8 +246,11 @@ working" rather than "how many agent-hours were spent".
 **A session that spans the window is counted only for its share of it.**  A
 session running from Tuesday to Friday appears in Wednesday's digest, but only
 the files, commands, turns and errors timestamped inside Wednesday are counted,
-and the duration shown is the part that fell inside the window.  Sessions whose
-records carry no usable timestamps fall back to their lifetime totals.
+and the duration shown runs from the first thing it did on Wednesday to the
+last — not from midnight.  Leave a session open overnight, come back and run
+one command at 09:16, and clipping to the *edge* of the day reported `9h 16m
+active` beside `1 command`: every hour spent asleep counted as work.  Sessions
+whose records carry no usable timestamps fall back to their lifetime totals.
 
 **Two clocks are involved, and the log's wins.**  The timestamps come from
 whichever machine wrote the log, which may be ahead of the one reading it — an

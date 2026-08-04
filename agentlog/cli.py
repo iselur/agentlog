@@ -151,6 +151,22 @@ def _until_for_period(period: str) -> Optional[datetime]:
 # Session filtering
 # ---------------------------------------------------------------------------
 
+def _first_and_last_inside(s: Dict, start: datetime, end: datetime):
+    """When the session's first and last event inside the window happened.
+
+    ``None`` when the session was parsed without per-event timestamps, or when
+    none of them land inside — there is nothing to tighten to, so the caller
+    keeps the window edge.  That is the same fallback ``_clip_counts`` takes,
+    for the same reason: a lifetime total is a worse answer than a clipped one,
+    but a made-up one is worse than both.
+    """
+    inside = [ts for ts, _kind, _value in (s.get("events") or [])
+              if ts is not None and start <= ts <= end]
+    if not inside:
+        return None
+    return min(inside), max(inside)
+
+
 def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
     """Recount files, commands, turns and errors from events inside the window.
 
@@ -204,8 +220,12 @@ def _filter_sessions(
     A session that began yesterday and is still running belongs in ``today``;
     filtering on the start timestamp alone made long-running sessions vanish.
     When a session extends past either edge of the window, a copy is returned
-    carrying ``window_s`` — the seconds it spent inside the window — so totals
-    reflect the period asked for rather than the session's whole lifetime.
+    carrying ``window_s`` — the seconds between the first and the last thing it
+    did inside the window — so totals reflect the period asked for rather than
+    the session's whole lifetime.  Between the first and last *event*, not
+    between the window's own edges: a session left open overnight did nothing
+    at local midnight, and billing it from there reported a night's sleep as
+    nine hours of work.
     """
     out = []
     for s in sessions:
@@ -227,6 +247,15 @@ def _filter_sessions(
         clipped_start = max(start, since) if since is not None else start
         clipped_end = max(end if until is None else min(end, until),
                           clipped_start)
+        if clipped_start > start or clipped_end < end:
+            # The window edge is where we started looking, not when anything
+            # happened.  A session left open overnight began its day at local
+            # midnight, so every hour spent asleep was counted as active and
+            # one command at 09:16 headlined as `9h 16m active`.  The counts
+            # beside it were already right, which is what made it look sound.
+            tightened = _first_and_last_inside(s, clipped_start, clipped_end)
+            if tightened is not None:
+                clipped_start, clipped_end = tightened
         s = dict(s)
         s["win_start"] = clipped_start
         s["win_end"] = clipped_end
