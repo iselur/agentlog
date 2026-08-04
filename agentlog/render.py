@@ -358,11 +358,25 @@ def _relative_path(path: str, root: str, width: int = 34) -> str:
 
 
 def _busiest_hour(sessions: List[Dict]) -> Optional[str]:
-    """The local hour with the most recorded activity, as 'HH:00–HH:00'."""
+    """The local hour with the most recorded activity, as 'HH:00–HH:00'.
+
+    Inside the window, when there is one.  Every other number in the digest is
+    clipped to the period being reported; this one was counted from each
+    session's whole event list, so a session that worked hard at 03:00 yesterday
+    and ran two commands at 14:00 today had `today` report `busiest 03:00`.  The
+    one line that says *when* was the one drawn from outside the window.
+    ``win_start`` and ``win_end`` are both real events by the time they get
+    here, so the ends are inclusive.  See ``tests/test_busiest_hour.py``.
+    """
     buckets: Dict[int, int] = {}
     for s in sessions:
+        start, end = s.get("win_start"), s.get("win_end")
         for ts, kind, _value in s.get("events") or []:
             if ts is None or kind == "turn":
+                continue
+            if start is not None and ts < start:
+                continue
+            if end is not None and ts > end:
                 continue
             hour = ts.astimezone().hour
             buckets[hour] = buckets.get(hour, 0) + 1
