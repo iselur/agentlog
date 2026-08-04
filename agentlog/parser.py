@@ -123,6 +123,46 @@ def _failed(value) -> bool:
     return False
 
 
+def _compaction(ts, metadata) -> Optional[Dict]:
+    """One `compact_boundary` record, or None if it says nothing usable.
+
+    ``dropped`` is this compaction's own loss, ``pre - post``.  The record also
+    carries ``cumulativeDroppedTokens``, which is a *running total* — on every
+    real record it equals the running sum of ``pre - post`` — so adding that
+    field up across a session counts the first compaction once for every
+    compaction after it.  A session with three of them would report roughly
+    three times what was actually lost, and the only thing wrong with the
+    number is that it is too big, which is not something a reader can catch.
+
+    A record with no metadata, or with token counts that are not numbers, is
+    dropped rather than guessed at: a compaction reported with invented sizes
+    is worse than one not reported, because the sizes are the whole point.
+    """
+    meta = _obj(metadata)
+    pre, post = meta.get("preTokens"), meta.get("postTokens")
+    if not _is_number(pre) or not _is_number(post):
+        return None
+    pre, post = int(pre), int(post)
+    return {
+        "at": ts,
+        # Whatever the log said.  Guessing "auto" for a trigger this tool has
+        # not seen before would report a wall the session never hit.
+        "trigger": _text(meta.get("trigger")) or "?",
+        "pre": pre,
+        "post": post,
+        # Never negative: a post larger than pre is not a compaction that
+        # gained context, it is a record we cannot read.
+        "dropped": max(0, pre - post),
+        # Nor is a clock that stepped backwards mid-compaction time refunded.
+        "duration_s": max(0.0, _count(meta.get("durationMs")) / 1000.0),
+    }
+
+
+def _is_number(value) -> bool:
+    """A real number, written as one.  `True` is not a token count."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -220,6 +260,7 @@ def _empty_session(session_id: str, source: str) -> Dict:
         "tokens_out": None,
         "ai_title": None,
         "recaps": [],
+        "compactions": [],
         "version": None,
         "skipped_lines": 0,
     }
@@ -476,6 +517,11 @@ def parse_claude_session(
             text = _strip_recap_trailer(_text(obj.get("content")))
             if text:
                 s["recaps"].append((ts, text))
+
+        elif record_type == "system" and obj.get("subtype") == "compact_boundary":
+            entry = _compaction(ts, obj.get("compactMetadata"))
+            if entry is not None:
+                s["compactions"].append(entry)
 
     # Require at least one user turn or timestamp to be a real session
     if s["user_turns"] == 0 and s["start"] is None:
@@ -942,6 +988,7 @@ def _merge_sessions(group: List[Dict]) -> Dict:
     merged["files_written"] = []
     merged["commands"] = []
     merged["failed_cmds"] = []
+    merged["compactions"] = []
     merged["write_counts"] = {}
     merged["user_turns"] = 0
     merged["errors"] = 0
@@ -955,6 +1002,9 @@ def _merge_sessions(group: List[Dict]) -> Dict:
         merged["files_written"].extend(s["files_written"])
         merged["commands"].extend(s["commands"])
         merged["failed_cmds"].extend(s["failed_cmds"])
+        # Concatenated, not unioned: two workers that both had to compact are
+        # two compactions, and each one really cost its own time.
+        merged["compactions"].extend(s.get("compactions") or [])
         for path, n in s["write_counts"].items():
             merged["write_counts"][path] = merged["write_counts"].get(path, 0) + n
         merged["user_turns"] += s["user_turns"]
@@ -971,6 +1021,7 @@ def _merge_sessions(group: List[Dict]) -> Dict:
                 merged[field] = s[field]
     # A record whose timestamp would not parse still has an event; it sorts to
     # the front rather than raising halfway through the merge.
+    merged["compactions"].sort(key=lambda c: c["at"] or _EPOCH)
     merged["events"].sort(key=lambda e: e[0] or _EPOCH)
     merged["token_events"].sort(key=lambda e: e[0] or _EPOCH)
     merged["models"] = _dedup(merged["models"])

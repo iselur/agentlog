@@ -579,6 +579,31 @@ def _dedup_merge(a: List[str], b: List[str]) -> List[str]:
     return out
 
 
+def _fmt_compactions(s: Dict) -> str:
+    """What the session spent keeping itself going, or '' if it never had to.
+
+    A session that compacts is one that ran out of room and had to summarise
+    itself to continue.  It costs real wall-clock — a median of over two
+    minutes each on the developer's own logs — and it throws most of the
+    context away, so a session that did it repeatedly looks from the outside
+    like one that was merely slow.  This is the line that says otherwise.
+
+    Manual compactions are named separately because they are a different
+    event: `/compact` is a person deciding, and running out of room is not.  A
+    count that mixed them would overstate how often the session hit a wall.
+    """
+    compactions = s.get("compactions") or []
+    if not compactions:
+        return ""
+    manual = sum(1 for c in compactions if c.get("trigger") == "manual")
+    spent = _fmt_duration(sum(c.get("duration_s", 0.0) for c in compactions))
+    dropped = sum(c.get("dropped", 0) for c in compactions)
+    how_many = f"compacted {len(compactions)}x"
+    if manual:
+        how_many += f" ({manual} manual)"
+    return f"{how_many} — {spent} spent, {dropped:,} tokens dropped"
+
+
 def _fmt_tokens(s: Dict) -> str:
     parts = []
     if s.get("tokens_in") is not None:
@@ -647,6 +672,11 @@ def render_show(s: Dict) -> str:
     tokens = _fmt_tokens(s)
     if tokens:
         lines.append(f"tokens   {tokens.replace('tokens — ', '')}")
+    # Only when it happened.  A row saying "0" is a row the reader has to read
+    # before finding out it says nothing.
+    compacted = _fmt_compactions(s)
+    if compacted:
+        lines.append(f"context  {compacted}")
 
     # Before the paths, because it is the only part of this view that answers
     # "what was this for?" and a reader who has to scroll past forty file
@@ -786,6 +816,13 @@ def _session_for_json(s: Dict) -> Dict:
     if s.get("recaps"):
         out["recaps"] = [{"at": at.isoformat() if at else None, "text": text}
                          for at, text in s["recaps"]]
+    # `at` is a datetime everywhere else in the session dict; json.dumps raises
+    # on one, so the failure would land on whoever piped the output into jq.
+    if s.get("compactions"):
+        out["compactions"] = [
+            dict(c, at=c["at"].isoformat() if c.get("at") else None)
+            for c in s["compactions"]
+        ]
     return out
 
 

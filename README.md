@@ -129,6 +129,7 @@ For each session it derives:
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
 | recap | `system` records with subtype `away_summary` — the short plain-English note a background session writes at the end of a turn, minus its trailing pointer at the settings screen |
+| context | `system` records with subtype `compact_boundary` — how many times the session ran out of room and summarised itself, how long that took (`compactMetadata.durationMs`), and how much was thrown away (`preTokens - postTokens`, see below) |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final `total_token_usage` snapshot, falling back to summing the per-turn `last_token_usage` blocks in a log too old to carry it |
 
 **A turn is a time you said something.** Claude Code writes a `type: "user"`
@@ -148,6 +149,32 @@ it ran is a command that ran, and so does everything that happened around an
 injected record. Only the claim that you spoke is dropped. A record with
 neither field — older logs — is counted, since dropping real turns would be the
 opposite mistake, and only an explicit `true` counts as either.
+
+**Compaction is where long sessions go.**  When a session runs out of room,
+Claude Code summarises the conversation so far and throws the rest away.  It
+costs real wall-clock and it is not free of consequence, but nothing in the log
+a person reads says it happened, so a session that spent hours re-reading its
+own summary looks exactly like one that was merely slow.  `agentlog show` now
+prints a `context` line when there was one:
+
+```
+context  compacted 98x — 3h 59m spent, 9,944,222 tokens dropped
+```
+
+Across the 896 logs this was developed against: 313 compactions in 49 sessions,
+twelve hours of wall-clock, a median of 2m17s each, and a median of 13% of the
+context surviving.  Manual `/compact` runs are counted separately from
+automatic ones — one is a person deciding, the other is the session hitting a
+wall, and a number that mixed them would overstate how often it hit the wall.
+
+The subtraction matters.  The record also carries `cumulativeDroppedTokens`,
+which is a **running total** — it equals the running sum of `preTokens -
+postTokens` on every real record — so adding that field up across a session
+counts the first compaction once for every compaction after it.  A session with
+three of them would report roughly three times what was lost, and the only
+thing wrong with the number is that it is too big, which is not something a
+reader can check.  agentlog uses `pre - post` per compaction and lets the total
+fall out of the sum.
 
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.
