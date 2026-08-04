@@ -120,13 +120,26 @@ For each session it derives:
 | project | `cwd` field in first `user` record |
 | start / end / duration | first and last `timestamp` fields seen |
 | models | `message.model` in `assistant` records |
-| user turns | count of `type == "user"` records |
+| user turns | `type == "user"` records that are a person typing — not tool results, not subagent prompts (see below) |
 | files read | `Read` tool-use calls (`input.file_path`) |
 | files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
+
+**A turn is a time you said something.** Claude Code writes a `type: "user"`
+record for three different things, and only one of them is a person: a tool
+result fed back into the loop is the agent's own machinery, and a record marked
+`isSidechain: true` is a prompt the agent wrote for a subagent. Counting all
+three reported 38318 turns across 896 real session logs where 2314 were typed,
+and one session read 3637 for a day with 211. That kind of error is worth more
+care than most, because a reader cannot catch it: an under-count can be checked
+by adding up the sources, but there is nothing to check an over-count against —
+it just reads as a long day. The subagent's *work* still counts; a `pytest -x`
+it ran is a command that ran. Only the prompt is not yours. A record with no
+`isSidechain` field at all — older logs — is counted, since dropping real turns
+would be the opposite mistake.
 
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.

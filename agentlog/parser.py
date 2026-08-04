@@ -252,19 +252,31 @@ def parse_claude_session(path: str) -> Optional[Dict]:
             # Prefer the sessionId embedded in the record over the filename
             if s["id"] == session_id and _text(obj.get("sessionId")):
                 s["id"] = _text(obj["sessionId"])
-            s["user_turns"] += 1
             # Count tool errors embedded in user content
             msg = _obj(obj.get("message"))
+            saw_result = False
             for item in _items(msg.get("content")):
-                if (
-                    isinstance(item, dict)
-                    and item.get("type") == "tool_result"
-                    and item.get("is_error")
-                ):
+                if not isinstance(item, dict) or item.get("type") != "tool_result":
+                    continue
+                saw_result = True
+                if item.get("is_error"):
                     s["errors"] += 1
                     label = tool_labels.get(_text(item.get("tool_use_id")), "")
                     s["failed_cmds"].append(label)
                     s["events"].append((ts, "error", label))
+
+            # A `user` record is written for three different things and only
+            # one of them is a person: a tool result is the agent feeding
+            # itself, and a sidechain record is a prompt the agent wrote for a
+            # subagent.  Counting all three said 38318 turns on 896 real logs
+            # where 2314 were typed — and an over-count is the one a reader
+            # cannot catch, because there is nothing to check it against.
+            #
+            # Only an explicit true is a subagent: the field is absent on older
+            # logs, and dropping those turns would be the opposite error.
+            if saw_result or obj.get("isSidechain") is True:
+                continue
+            s["user_turns"] += 1
             s["events"].append((ts, "turn", ""))
 
         elif record_type == "assistant":
