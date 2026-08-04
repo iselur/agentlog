@@ -382,6 +382,23 @@ def _write_utf8_if_the_locale_said_nothing() -> None:
             pass                        # not a real stream, or already written to
 
 
+def _stop_writing_down_a_closed_pipe() -> None:
+    """Point stdout at nowhere, so nothing is left to fail on the way out.
+
+    Catching the `BrokenPipeError` is only half of it: whatever is still in the
+    buffer gets flushed again when the interpreter shuts down, too late for any
+    `except` of ours, and that second failure is what prints `Exception ignored
+    in: <_io.TextIOWrapper ...>` and turns the exit code into 120.  Redirecting
+    the file descriptor gives that flush somewhere harmless to go.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (AttributeError, OSError, ValueError):
+        pass                            # not a real stream; nothing to protect
+
+
 def main(argv=None) -> int:
     """Entry point, and the one place ctrl-c is allowed to mean something.
 
@@ -391,11 +408,26 @@ def main(argv=None) -> int:
     traceback reads as a crash and sends people looking for a bug they caused
     on purpose.  130 is the shell's own spelling of "stopped by ctrl-c", and it
     keeps `agentlog today > digest.md && mail-it` from mailing half a day.
+
+    A closed pipe is the same shape of thing.  `agentlog today | head` and
+    `| less` quit with `q` are ordinary too, and they leave us writing into a
+    pipe nobody is reading.  141 is 128 + SIGPIPE, the shell's spelling of
+    "the reader hung up", and like 130 it is deliberately not one of the
+    answers a caller is looking for: a digest that got cut off short reported
+    nothing about your day.  The flush lives in a `finally` because argparse
+    prints `--help` and `--version` and then exits, so the write that fails is
+    one nothing inside `_run` would ever see.
     """
     try:
-        return _run(argv)
+        try:
+            return _run(argv)
+        finally:
+            sys.stdout.flush()
     except KeyboardInterrupt:
         return 130
+    except BrokenPipeError:
+        _stop_writing_down_a_closed_pipe()
+        return 141
 
 
 def _run(argv=None) -> int:

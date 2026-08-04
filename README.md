@@ -99,7 +99,11 @@ Output flags:
 
 The `AGENTLOG_HOME` environment variable is equivalent to `--home`.
 
-Exit codes: 0 normal, 2 usage or argument error.
+Exit codes: 0 normal, 2 usage or argument error, 130 stopped by ctrl-c,
+141 the reader hung up (`agentlog today | head`, or `| less` quit with
+`q`). The last two are deliberately not 0: a digest that was cut off
+short reported nothing about your day, and `agentlog today > digest.md
+&& mail-it` should not mail half of one.
 
 ---
 
