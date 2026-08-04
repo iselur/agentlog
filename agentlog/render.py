@@ -139,6 +139,44 @@ def _shorten_cmd(cmd: str, width: int = 72) -> str:
     return cmd
 
 
+def _one_row(text: str, width: int = 400) -> str:
+    """One value from a log file, on one row, whatever it has in it.
+
+    `safe_for_terminal` keeps newlines because they are this module's own
+    layout — but only if the untrusted text passed through it *first*.  Put a
+    raw value into the layout and the two are no longer distinguishable, so a
+    command containing a newline arrives on screen as extra rows:
+
+        commands (1):
+          $ echo harmless
+          $ npm publish --access public
+
+    One command ran; two are shown, and the second was written by the thing
+    being audited in the exact shape of a real row.  `agentlog show` is where
+    someone goes to find out what an agent did, so a row it cannot vouch for
+    is the whole problem, and the header count disagreeing with the rows is
+    the only tell.  Ordinary sessions hit this too — agents write heredocs and
+    `python3 -c` all day, and every one of those became several rows.
+
+    `str.splitlines` rather than a `\\n` replace, because a terminal also
+    breaks on `\\r`, `\\v`, `\\f` and U+2028/9.  `safe_for_terminal` strips
+    those later, but stripping them would join the two halves into one word
+    and hide the seam.
+
+    The width is generous — this is the detail view, and reading the whole
+    command is what it is for — but not unbounded: one 5 MB heredoc used to
+    print as a 5 MB row and take the rest of the session off the screen with
+    it.  When it does cut, it says so and says where the whole one is, because
+    a detail view quietly showing less than it has is the same fault pointing
+    the other way.
+    """
+    flat = " ".join(text.splitlines())
+    if len(flat) <= width:
+        return flat
+    return "{}… (+{:,} more characters, see --json)".format(
+        flat[:width], len(flat) - width)
+
+
 # ---------------------------------------------------------------------------
 # Summary line
 # ---------------------------------------------------------------------------
@@ -536,17 +574,22 @@ def render_list(sessions: List[Dict]) -> str:
 
 def render_show(s: Dict) -> str:
     """Render a single session in full detail."""
+    # Every value below came out of a log file written by the thing this view
+    # exists to audit, so each one goes through `_one_row` before it is put
+    # into the layout — a value that can start its own row can write whatever
+    # it likes here.  The counts in the headers are what makes that visible,
+    # and they are only true if one item is one row.
     lines: List[str] = []
-    lines.append(f"session  {s['id']}")
-    lines.append(f"source   {s.get('source', '?')}")
-    lines.append(f"project  {s['project'] or '?'}")
+    lines.append(f"session  {_one_row(str(s['id']))}")
+    lines.append(f"source   {_one_row(str(s.get('source', '?')))}")
+    lines.append(f"project  {_one_row(str(s['project'] or '?'))}")
     lines.append(f"start    {_fmt_datetime(s['start'])}")
     lines.append(f"end      {_fmt_datetime(s['end'])}")
     lines.append(f"duration {_fmt_duration(s['duration_s'])}")
     if s["models"]:
-        lines.append(f"models   {', '.join(s['models'])}")
+        lines.append(f"models   {_one_row(', '.join(s['models']))}")
     if s.get("version"):
-        lines.append(f"version  {s['version']}")
+        lines.append(f"version  {_one_row(str(s['version']))}")
     lines.append(f"turns    {s['user_turns']}")
     lines.append(f"errors   {s['errors']}")
     tokens = _fmt_tokens(s)
@@ -557,19 +600,19 @@ def render_show(s: Dict) -> str:
         lines.append("")
         lines.append(f"files read ({len(s['files_read'])}):")
         for f in s["files_read"]:
-            lines.append(f"  {f}")
+            lines.append(f"  {_one_row(f)}")
 
     if s["files_written"]:
         lines.append("")
         lines.append(f"files written ({len(s['files_written'])}):")
         for f in s["files_written"]:
-            lines.append(f"  {f}")
+            lines.append(f"  {_one_row(f)}")
 
     if s["commands"]:
         lines.append("")
         lines.append(f"commands ({len(s['commands'])}):")
         for cmd in s["commands"]:
-            lines.append(f"  $ {cmd}")
+            lines.append(f"  $ {_one_row(cmd)}")
 
     return safe_for_terminal("\n".join(lines))
 

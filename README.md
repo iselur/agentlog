@@ -272,6 +272,15 @@ Failures that differ only below their first line — the same heredoc run three
 times — are collapsed into one row with a `(3x)` marker.  `--sessions`,
 `agentlog show ID` and `--json` give the unabridged version.
 
+**One item is one row.**  Everything on screen came out of a log file written
+by the agent being audited, so a command or path is flattened to a single line
+before it is printed.  Otherwise a command containing a newline printed as
+several rows, each looking exactly like a real command that ran — `commands
+(1):` above three `$` lines — and agents write multi-line heredocs all day.
+The row counts in the headers are the check, and they are only true if this
+holds.  In `agentlog show`, a line longer than 400 characters is cut with a
+marker saying how much was dropped; `--json` always has the whole thing.
+
 **Tokens are not verified.**  Token counts come from usage fields in the logs.
 They may differ from what your billing provider records.
 
