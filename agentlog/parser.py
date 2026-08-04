@@ -163,14 +163,23 @@ def active_spans(s: Dict, start: Optional[datetime] = None,
     that is the same fallback the counting takes, for the same reason — we
     cannot see inside it, and a lifetime total is a worse answer than a clipped
     one but a made-up one is worse than both.
+
+    But only a session we genuinely cannot see inside.  A session with four
+    thousand events, none of them on the day being asked for, is one we can see
+    inside perfectly well, and what we can see is that it slept through that
+    day — the answer is nothing, not the width of the window.  Getting that
+    wrong made a week come out shorter than the days inside it added up to.
+    See tests/test_quiet_days.py.
     """
+    stamped = [ts for ts, _kind, _value in (s.get("events") or []) if ts is not None]
     times = sorted(
-        ts for ts, _kind, _value in (s.get("events") or [])
-        if ts is not None
-        and (start is None or ts >= start)
+        ts for ts in stamped
+        if (start is None or ts >= start)
         and (end is None or (ts < end if end_open else ts <= end))
     )
     if not times:
+        if stamped:
+            return []
         first = start if start is not None else s.get("start")
         last = end if end is not None else (s.get("end") or first)
         if first is None or last is None or last < first:

@@ -329,8 +329,14 @@ the files, commands, turns and errors timestamped inside Wednesday are counted,
 and the duration shown is what it worked on Wednesday — not the span from
 midnight.  Leave a session open overnight, come back and run one command at
 09:16, and clipping to the *edge* of the day reported `9h 16m active` beside
-`1 command`: every hour spent asleep counted as work.  Sessions whose records
-carry no usable timestamps fall back to their lifetime totals.
+`1 command`: every hour spent asleep counted as work.
+
+A session that did nothing at all inside the window is counted as nothing, even
+though it still appears there.  Only a session whose records carry no usable
+timestamps falls back to its lifetime total — that is a session we cannot see
+inside, which is a different thing from one we can see slept.  Confusing the two
+made four separate days each report exactly `24h 00m`, and made a week come out
+shorter than the days inside it added up to.
 
 **Consecutive days add up.**  A day starts at local midnight and ends *before*
 the next one, so anything stamped exactly on the stroke belongs to the day it
