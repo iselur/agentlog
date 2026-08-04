@@ -470,12 +470,25 @@ class TestGroupedDocuments(unittest.TestCase):
         self.assertLess(page.index(">beta<"), page.index(">alpha<"))
 
     def test_html_is_self_contained(self):
+        # Self-contained means the page fetches nothing when it is opened: the
+        # digest is read on machines that are offline, and a stylesheet that
+        # silently fails to load is a page that renders as unstyled text.
+        #
+        # What that rules out is loading, not linking.  The footer links to the
+        # project on GitHub and should; a reader clicking it is not the page
+        # reaching out on its own.  So this checks the constructs that fetch --
+        # and `http://` besides, which has no business here in any position.
+        #
+        # Written as a skipped check for `http://` once, which read as three
+        # assertions and made one.
         from agentlog.html import render_html
         page = render_html(self._two_projects(), ["claude"], "today")
-        for scheme in ("http://", "https://cdn", "<script"):
-            if scheme == "http://":
-                continue
-            self.assertNotIn(scheme, page)
+        for fetches in ("<script", "<link", "src=", "@import", "url(",
+                        "http://"):
+            self.assertNotIn(
+                fetches, page,
+                "the digest is opened offline; {!r} makes it reach for "
+                "something it will not get".format(fetches))
         self.assertIn("<style>", page)
 
     def test_html_reports_the_running_version(self):
