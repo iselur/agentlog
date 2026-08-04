@@ -37,8 +37,10 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 from agentlog.cli import _build_parser as build_parser
+from agentlog import window
 
 CLI_SOURCE = os.path.join(_ROOT, "agentlog", "cli.py")
+WINDOW_SOURCE = os.path.join(_ROOT, "agentlog", "window.py")
 README = os.path.join(_ROOT, "README.md")
 
 # `agentlog` on its own is `today`, which argparse supplies as the default
@@ -47,15 +49,22 @@ _WORD = re.compile(r"(?<![\w-])([a-z][a-z0-9-]*)(?![\w-])")
 
 
 def dispatched_commands():
-    """Every name the if/elif chain in cmd_digest actually answers to.
+    """Every name this tool actually answers to, from the two places it decides.
 
-    Read out of the source rather than by calling, because the point is to
-    find the ones nobody remembered to mention — and a list written here by
-    hand would be a fifth copy of exactly the thing being checked.
+    The chain is in two halves now.  `list` and `show` are matched in `cli`,
+    where they belong: they take an id and print a thing.  The commands that
+    name a stretch of time are matched in `window`, which is what a time
+    command means, and that half declares its names as `PERIODS` and `DATED`
+    rather than burying them in an if/elif.
+
+    Both halves are read rather than written down: the `cli` half by walking
+    its comparisons, the `window` half by asking the module for the tuples it
+    dispatches on.  A list typed out here would be a fifth copy of exactly the
+    thing being checked.
     """
+    found = set(window.PERIODS) | set(window.DATED)
     with open(CLI_SOURCE, encoding="utf-8") as handle:
         tree = ast.parse(handle.read())
-    found = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Compare) or len(node.ops) != 1:
             continue
@@ -86,6 +95,11 @@ def epilog():
 def unknown_command_hint():
     """The `try: ...` lines printed when the chain falls through.
 
+    In `window`, with the chain it is the fall-through of.  A hint that is
+    printed at the moment somebody typed a command wrong belongs next to the
+    code deciding which commands are right; keeping it in `cli` would have put
+    two files between the list and the message about the list.
+
     Read as source, which means two things are in the text that a person
     reading the terminal never sees.  The f-string placeholders:
     `{args.command}` is the name of a variable, not a command being offered.
@@ -93,12 +107,17 @@ def unknown_command_hint():
     source it is a backslash and the letter `n`, which reads as a one-letter
     command nobody has.  Both come out before anything counts words.
     """
-    with open(CLI_SOURCE, encoding="utf-8") as handle:
+    with open(WINDOW_SOURCE, encoding="utf-8") as handle:
         source = handle.read()
     start = source.find("unknown command")
-    if start < 0:
+    end = source.find('".format(', start)
+    if start < 0 or end < 0:
+        # Both ends, and "" rather than a slice, on purpose.  A missing end
+        # marker used to leave `find` returning -1, which is a legal index:
+        # the slice quietly became the rest of the file and every word in it
+        # counted as a command being offered.  Nothing failed; the check just
+        # stopped being one.
         return ""
-    end = source.find("file=sys.stderr", start)
     text = re.sub(r"\{[^}]*\}", " ", source[start:end])
     return re.sub(r"\\.", " ", text)
 

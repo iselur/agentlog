@@ -8,7 +8,8 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agentlog.cli import _parse_since, _filter_sessions, main
+from agentlog.cli import main
+from agentlog.window import _parse_since, _filter_sessions
 from tests.fixtures import (
     claude_user,
     claude_assistant,

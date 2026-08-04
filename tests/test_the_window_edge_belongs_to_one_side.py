@@ -1,6 +1,6 @@
 """The instant on a window's edge belongs to exactly one of the two windows.
 
-`cli._inside` carries the rule and its history: "Both were inclusive, so an
+`window._inside` carries the rule and its history: "Both were inclusive, so an
 event at exactly local midnight was the last thing yesterday and the first
 thing today, and three turns across the two commands were reported as four."
 `tests/test_day_partition.py` holds it to that.
@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog.cli import _inside  # noqa: E402
+from agentlog.window import _inside  # noqa: E402
 from agentlog.parser import _empty_session, active_spans  # noqa: E402
 
 MIDNIGHT = datetime(2026, 8, 4, 0, 0, tzinfo=timezone.utc)

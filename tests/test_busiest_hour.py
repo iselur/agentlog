@@ -26,7 +26,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser, render  # noqa: E402
+from agentlog import window, parser, render  # noqa: E402
 
 SID = "1a1a1a1a-0000-4000-8000-000000000001"
 
@@ -88,7 +88,7 @@ class Case(unittest.TestCase):
     def sessions(self, since, until):
         self.write()
         found, _sources, _unusable = parser.find_sessions(self.home)
-        return cli._filter_sessions(found, since, until)
+        return window._filter_sessions(found, since, until)
 
 
 class TestTheHourIsInsideThePeriod(Case):

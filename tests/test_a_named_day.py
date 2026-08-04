@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser  # noqa: E402
+from agentlog import window, parser  # noqa: E402
 
 SID = "3c3c3c3c-0000-4000-8000-000000000003"
 
@@ -144,7 +144,7 @@ class TestTheOffsetForm(Case):
 
     def test_zero_days_ago_is_today_even_though_since_refuses_it(self):
         # `since 0d` is a window from now until now.  `on 0d` is a day.
-        self.assertIsNone(cli._parse_since("0d"))
+        self.assertIsNone(window._parse_since("0d"))
         got = self.json_of("on", "0d")
         today = self.json_of("today")
         self.assertEqual([s["id"] for s in got], [s["id"] for s in today])
@@ -216,7 +216,7 @@ class TestParsingOnItsOwn(unittest.TestCase):
     """The day parser, away from the CLI."""
 
     def test_an_iso_date_gives_that_whole_day(self):
-        start, end = cli._parse_day("2026-07-31")
+        start, end = window._parse_day("2026-07-31")
         self.assertEqual(start.date(), date(2026, 7, 31))
         self.assertEqual(end.date(), date(2026, 8, 1))
         self.assertEqual((end - start), timedelta(days=1))
@@ -226,17 +226,17 @@ class TestParsingOnItsOwn(unittest.TestCase):
         # day, and it is not twenty-four hours long.
         for value in ("2026-01-01", "2026-12-31", "0d", "1d", "9d",
                       "2026-03-29", "2026-10-25"):
-            start, end = cli._parse_day(value)
+            start, end = window._parse_day(value)
             self.assertEqual(end.date() - start.date(), timedelta(days=1), value)
             self.assertEqual((end.hour, end.minute), (0, 0), value)
 
     def test_it_starts_at_local_midnight(self):
-        start, _end = cli._parse_day("2026-07-31")
+        start, _end = window._parse_day("2026-07-31")
         self.assertEqual((start.hour, start.minute, start.second), (0, 0, 0))
 
     def test_what_it_refuses(self):
         for value in ("12h", "2w", "-1d", "", "tuesday", "2026-13-01", "3"):
-            self.assertIsNone(cli._parse_day(value), value)
+            self.assertIsNone(window._parse_day(value), value)
 
 
 if __name__ == "__main__":

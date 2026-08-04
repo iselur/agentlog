@@ -42,7 +42,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog.cli import _filter_sessions
+from agentlog.window import _filter_sessions
 
 
 def _local(dt):

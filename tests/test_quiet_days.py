@@ -29,7 +29,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser, render  # noqa: E402
+from agentlog import window, parser, render  # noqa: E402
 
 SID = "1a1a1a1a-0000-4000-8000-000000000001"
 
@@ -67,14 +67,14 @@ class Case(unittest.TestCase):
         self.write()
         start = self.midnight - timedelta(days=offset)
         found, _sources, _unusable = parser.find_sessions(self.home)
-        return cli._filter_sessions(found, start, start + timedelta(days=1))
+        return window._filter_sessions(found, start, start + timedelta(days=1))
 
     def span(self, days_back):
         """The sessions of the whole stretch from ``days_back`` ago to tonight."""
         self.write()
         start = self.midnight - timedelta(days=days_back)
         found, _sources, _unusable = parser.find_sessions(self.home)
-        return cli._filter_sessions(found, start, self.midnight + timedelta(days=1))
+        return window._filter_sessions(found, start, self.midnight + timedelta(days=1))
 
     def digest(self, *args):
         self.write()

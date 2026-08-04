@@ -37,7 +37,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser, render  # noqa: E402
+from agentlog import window, parser, render  # noqa: E402
 
 GAP = parser.IDLE_GAP_S
 
@@ -77,7 +77,7 @@ class Case(unittest.TestCase):
         self.write()
         found, _sources, _unusable = parser.find_sessions(self.home)
         day = self.base.replace(hour=0, minute=0, second=0, microsecond=0)
-        return cli._filter_sessions(found, day, day + timedelta(days=1))
+        return window._filter_sessions(found, day, day + timedelta(days=1))
 
     def active(self):
         return render.active_seconds(self.sessions())

@@ -30,12 +30,12 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from agentlog.cli import (  # noqa: E402
+from agentlog.cli import main  # noqa: E402
+from agentlog.window import (  # noqa: E402
     _local_midnight,
     _filter_sessions,
     _today_local,
     _until_for_period,
-    main,
 )
 from tests.fixtures import claude_assistant, claude_user, tool_bash  # noqa: E402
 

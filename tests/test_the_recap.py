@@ -31,7 +31,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser, render  # noqa: E402
+from agentlog import window, parser, render  # noqa: E402
 
 SID = "4d4d4d4d-0000-4000-8000-000000000004"
 
@@ -156,13 +156,13 @@ class TestClippingThem(Case):
     def test_yesterdays_recap_is_not_todays(self):
         s = parser._empty_session("x", "claude")
         s["recaps"] = [(self.midnight - timedelta(hours=3), "old news")]
-        cli._clip_recaps(s, self.midnight, self.tomorrow)
+        window._clip_recaps(s, self.midnight, self.tomorrow)
         self.assertEqual(s["recaps"], [])
 
     def test_todays_recap_survives_today(self):
         s = parser._empty_session("x", "claude")
         s["recaps"] = [(self.midnight + timedelta(hours=3), "today's news")]
-        cli._clip_recaps(s, self.midnight, self.tomorrow)
+        window._clip_recaps(s, self.midnight, self.tomorrow)
         self.assertEqual([t for _at, t in s["recaps"]], ["today's news"])
 
     def test_a_recap_after_the_days_last_tool_call_still_counts(self):
@@ -183,12 +183,12 @@ class TestClippingThem(Case):
         # the session is the worse of the two mistakes.
         s = parser._empty_session("x", "claude")
         s["recaps"] = [(None, "no idea when")]
-        cli._clip_recaps(s, self.midnight, self.tomorrow)
+        window._clip_recaps(s, self.midnight, self.tomorrow)
         self.assertEqual([t for _at, t in s["recaps"]], ["no idea when"])
 
     def test_a_session_with_none_is_left_alone(self):
         s = parser._empty_session("x", "claude")
-        cli._clip_recaps(s, self.midnight, self.tomorrow)
+        window._clip_recaps(s, self.midnight, self.tomorrow)
         self.assertEqual(s["recaps"], [])
 
     def test_a_week_gathers_the_recaps_its_days_report(self):

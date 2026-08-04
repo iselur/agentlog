@@ -33,7 +33,7 @@ from datetime import datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import cli, parser, render  # noqa: E402
+from agentlog import window, parser, render  # noqa: E402
 
 SID = "1a1a1a1a-0000-4000-8000-000000000001"
 CID = "019f80fa-4d34-7513-8add-a5368508ba77"
@@ -83,7 +83,7 @@ class Case(unittest.TestCase):
         self.write()
         start = self.midnight - timedelta(days=offset)
         found, _sources, _unusable = parser.find_sessions(self.home)
-        return cli._filter_sessions(found, start, start + timedelta(days=1))
+        return window._filter_sessions(found, start, start + timedelta(days=1))
 
     def lifetime(self):
         self.write()
@@ -173,7 +173,7 @@ class TestWhatDidNotChange(Case):
 
     def test_a_session_that_reports_no_tokens_still_reports_none(self):
         blank = parser._empty_session("x", "claude")
-        cli._clip_tokens(blank, self.midnight, self.midnight + timedelta(days=1))
+        window._clip_tokens(blank, self.midnight, self.midnight + timedelta(days=1))
         self.assertIsNone(blank["tokens_in"])
         self.assertIsNone(blank["tokens_out"])
 
@@ -185,7 +185,7 @@ class TestWhatDidNotChange(Case):
         opaque["tokens_in"] = 4242
         opaque["tokens_out"] = 42
         opaque["token_events"] = []
-        cli._clip_tokens(opaque, self.midnight, self.midnight + timedelta(days=1))
+        window._clip_tokens(opaque, self.midnight, self.midnight + timedelta(days=1))
         self.assertEqual(opaque["tokens_in"], 4242)
         self.assertEqual(opaque["tokens_out"], 42)
 
@@ -199,7 +199,7 @@ class TestWhatDidNotChange(Case):
         seen["token_events"] = [
             (self.midnight - timedelta(hours=3), 4242, 42),
         ]
-        cli._clip_tokens(seen, self.midnight, self.midnight + timedelta(days=1))
+        window._clip_tokens(seen, self.midnight, self.midnight + timedelta(days=1))
         self.assertEqual(seen["tokens_in"], 0)
         self.assertEqual(seen["tokens_out"], 0)
 
@@ -290,7 +290,7 @@ class TestCodexToo(Case):
     def codex_day(self, offset=0):
         start = self.midnight - timedelta(days=offset)
         found, _sources, _unusable = parser.find_sessions(self.home)
-        got = [s for s in cli._filter_sessions(
+        got = [s for s in window._filter_sessions(
             found, start, start + timedelta(days=1)) if s["source"] == "codex"]
         return got
 
