@@ -152,7 +152,25 @@ def _until_for_period(period: str) -> Optional[datetime]:
 # Session filtering
 # ---------------------------------------------------------------------------
 
-def _first_and_last_inside(s: Dict, start: datetime, end: datetime):
+def _inside(ts: Optional[datetime], start: datetime, end: datetime,
+            end_open: bool) -> bool:
+    """Whether an event at ``ts`` belongs to this window.
+
+    The start is always inclusive.  The end is inclusive when it is a real
+    event's timestamp — the window has been tightened onto something that
+    happened, and that something is in it — and *exclusive* when it is an edge
+    the caller asked for, which is what ``_until_for_period`` has always said it
+    returns.  Both were inclusive, so an event at exactly local midnight was the
+    last thing yesterday and the first thing today, and three turns across the
+    two commands were reported as four.  See ``tests/test_day_partition.py``.
+    """
+    if ts is None or ts < start:
+        return False
+    return ts < end if end_open else ts <= end
+
+
+def _first_and_last_inside(s: Dict, start: datetime, end: datetime,
+                           end_open: bool = False):
     """When the session's first and last event inside the window happened.
 
     ``None`` when the session was parsed without per-event timestamps, or when
@@ -162,13 +180,14 @@ def _first_and_last_inside(s: Dict, start: datetime, end: datetime):
     but a made-up one is worse than both.
     """
     inside = [ts for ts, _kind, _value in (s.get("events") or [])
-              if ts is not None and start <= ts <= end]
+              if _inside(ts, start, end, end_open)]
     if not inside:
         return None
     return min(inside), max(inside)
 
 
-def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
+def _clip_counts(s: Dict, start: datetime, end: datetime,
+                 end_open: bool = False) -> None:
     """Recount files, commands, turns and errors from events inside the window.
 
     A session that ran for two weeks would otherwise contribute all of its
@@ -188,7 +207,7 @@ def _clip_counts(s: Dict, start: datetime, end: datetime) -> None:
     turns = 0
     errors = 0
     for ts, kind, value in events:
-        if ts is None or ts < start or ts > end:
+        if not _inside(ts, start, end, end_open):
             continue
         if kind == "turn":
             turns += 1
@@ -248,21 +267,31 @@ def _filter_sessions(
         clipped_start = max(start, since) if since is not None else start
         clipped_end = max(end if until is None else min(end, until),
                           clipped_start)
-        if clipped_start > start or clipped_end < end:
+        # An `until` that reaches back into the session is the *exclusive* end
+        # of the window, so the clip has to happen even when it lands exactly on
+        # the session's last event and nothing looks narrowed.  That is the case
+        # a day boundary produces, and it is the one that was counted twice.
+        end_open = until is not None and until <= end
+        clip = clipped_start > start or clipped_end < end or end_open
+        if clip:
             # The window edge is where we started looking, not when anything
             # happened.  A session left open overnight began its day at local
             # midnight, so every hour spent asleep was counted as active and
             # one command at 09:16 headlined as `9h 16m active`.  The counts
             # beside it were already right, which is what made it look sound.
-            tightened = _first_and_last_inside(s, clipped_start, clipped_end)
+            tightened = _first_and_last_inside(s, clipped_start, clipped_end,
+                                               end_open)
             if tightened is not None:
+                # Now both edges are things that happened, and an event at one
+                # of them is in the window by definition.
                 clipped_start, clipped_end = tightened
+                end_open = False
         s = dict(s)
         s["win_start"] = clipped_start
         s["win_end"] = clipped_end
-        if clipped_start > start or clipped_end < end:
+        if clip:
             s["window_s"] = (clipped_end - clipped_start).total_seconds()
-            _clip_counts(s, clipped_start, clipped_end)
+            _clip_counts(s, clipped_start, clipped_end, end_open)
         out.append(s)
     return out
 

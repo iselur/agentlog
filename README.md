@@ -321,6 +321,11 @@ one command at 09:16, and clipping to the *edge* of the day reported `9h 16m
 active` beside `1 command`: every hour spent asleep counted as work.  Sessions
 whose records carry no usable timestamps fall back to their lifetime totals.
 
+**Consecutive days add up.**  A day starts at local midnight and ends *before*
+the next one, so anything stamped exactly on the stroke belongs to the day it
+opens and is reported by `today`, not by `yesterday`.  Run the two commands back
+to back and each thing that happened is counted once between them.
+
 **Two clocks are involved, and the log's wins.**  The timestamps come from
 whichever machine wrote the log, which may be ahead of the one reading it — an
 NTP step, a resumed VM, a synced home directory.  A named day runs to midnight,
