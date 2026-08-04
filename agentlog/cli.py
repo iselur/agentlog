@@ -34,6 +34,7 @@ The tool never writes to or uploads the session logs.
 from __future__ import annotations
 
 import argparse
+import codecs
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -325,9 +326,51 @@ def _build_parser() -> argparse.ArgumentParser:
 # Main
 # ---------------------------------------------------------------------------
 
+def _as_typed(text):
+    """An argument in the form it was typed, not the form the locale allowed.
+
+    Python decodes ``sys.argv`` with the filesystem encoding, and on a machine
+    with no locale that encoding is ASCII — so ``--project 設定`` arrives as a
+    run of surrogates and matches nothing.  A filter that silently matches
+    nothing is the worst way for this to fail: it reads as a quiet day rather
+    than as an error.  ``os.fsencode`` gives the bytes back untouched, and the
+    shell that sent them was speaking UTF-8.
+    """
+    if text is None or text.isascii():
+        return text                     # the overwhelmingly common case
+    try:
+        return os.fsencode(text).decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return text
+
+
+def _write_utf8_if_the_locale_said_nothing() -> None:
+    """Write UTF-8 when the machine claims it can only take ASCII.
+
+    A container with no locale set — a Dockerfile without ``ENV LANG``, cron,
+    most of CI — leaves Python believing stdout is ASCII, and then a single em
+    dash of our own raises ``UnicodeEncodeError`` halfway through the digest:
+    a traceback and half a report, over a character no one chose.
+
+    An ASCII claim is not a claim about the terminal, though.  It is the
+    absence of one, and the terminal on the other end is virtually always
+    UTF-8.  So we write UTF-8 and keep ``surrogateescape``, which hands back
+    unchanged the bytes of any path this machine could not decode — that is
+    what makes a name it cannot spell come out spelled right anyway.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if codecs.lookup(stream.encoding or "").name == "ascii":
+                stream.reconfigure(encoding="utf-8", errors="surrogateescape")
+        except (AttributeError, LookupError, OSError, ValueError):
+            pass                        # not a real stream, or already written to
+
+
 def main(argv=None) -> int:
+    _write_utf8_if_the_locale_said_nothing()
     parser = _build_parser()
     args = parser.parse_args(argv)
+    args.project = _as_typed(args.project)
 
     home_dir = args.home or os.environ.get("AGENTLOG_HOME") or None
 
