@@ -212,8 +212,34 @@ def _claude_tool_items(assistant_obj: Dict):
         )
 
 
-def parse_claude_session(path: str) -> Optional[Dict]:
-    """Parse one Claude Code JSONL file.  Returns a session dict or None."""
+#: Returned instead of ``None`` for a file whose every record was already
+#: counted from an earlier file.  ``None`` means "this file contributed
+#: nothing", which is what the ``unusable`` note is for; this means "this file
+#: contributed nothing *because it was all already in the report*", which the
+#: reader does not need to hear about.  Identity-compared, never inspected.
+REPLAY: Dict = {"replay": True}
+
+
+def parse_claude_session(
+    path: str, seen_uuids: Optional[set] = None
+) -> Optional[Dict]:
+    """Parse one Claude Code JSONL file.  Returns a session dict or None.
+
+    ``seen_uuids`` is the set of record uuids already counted, and is added to
+    as this file is read.  Claude Code writes the same record into two files in
+    two ordinary situations — ``--resume`` copies the earlier transcript into
+    the new session verbatim, and a copied or moved project directory leaves
+    the whole log under both names — so a uuid is the identity of an event and
+    an event is counted once.  Pass a shared set across the files of one run to
+    get that; the default is a fresh set, which still protects against a record
+    repeated inside a single file.
+
+    Callers that pass a shared set must read the files oldest-first, so that
+    the sitting where the work actually happened is the one that reports it.
+    """
+    if seen_uuids is None:
+        seen_uuids = set()
+    replayed = 0
     session_id = os.path.splitext(os.path.basename(path))[0]
     lines, read_err = _read_lines(path)
 
@@ -246,6 +272,26 @@ def parse_claude_session(path: str) -> Optional[Dict]:
 
         record_type = obj.get("type", "")
         ts = _ts(obj.get("timestamp", ""))
+
+        uuid = _text(obj.get("uuid"))
+        if uuid and uuid in seen_uuids:
+            replayed += 1
+            # The directory and the version belong to the sitting rather than
+            # to the record, so a replayed record can still say which sitting
+            # this is; taking them costs nothing and keeps the row readable.
+            # Everything below this point is a count, and is skipped -- the
+            # timestamp included, because a resume that inherited the earlier
+            # transcript's timestamps would otherwise look like a session that
+            # had been running since the morning.
+            if record_type == "user":
+                if not s["project"]:
+                    s["project"] = _text(obj.get("cwd"))
+                if not s["version"]:
+                    s["version"] = _text(obj.get("version")) or None
+            continue
+        if uuid:
+            seen_uuids.add(uuid)
+
         if ts:
             if s["start"] is None or ts < s["start"]:
                 s["start"] = ts
@@ -339,7 +385,7 @@ def parse_claude_session(path: str) -> Optional[Dict]:
 
     # Require at least one user turn or timestamp to be a real session
     if s["user_turns"] == 0 and s["start"] is None:
-        return None
+        return REPLAY if replayed else None
 
     if not s["project"]:
         s["project"] = _decode_claude_path(path)
@@ -834,6 +880,22 @@ def _merge_sessions(group: List[Dict]) -> Dict:
     return merged
 
 
+def _oldest_first(paths: List[str]) -> List[str]:
+    """Oldest file first, ties broken by name, unstattable files last.
+
+    When the same record is in two files, the first file read is the one that
+    reports it, so this is what decides that a resume shows the work done in
+    the resume and the earlier sitting keeps its own.  Without it the answer
+    would depend on the order the filesystem happened to list the directory in.
+    """
+    def key(p: str) -> tuple:
+        try:
+            return (os.path.getmtime(p), p)
+        except OSError:
+            return (float("inf"), p)
+    return sorted(paths, key=key)
+
+
 def find_sessions(
     home_dir: Optional[str] = None,
 ) -> tuple[List[Dict], List[str], List[tuple]]:
@@ -858,6 +920,9 @@ def find_sessions(
 
     # Track real (resolved) file paths to skip symlink duplicates.
     seen_real_paths: set = set()
+    # Track record uuids, so that a record written into two files -- a resume,
+    # or a copied project directory -- is counted once.  See parse_claude_session.
+    seen_uuids: set = set()
 
     def _add(sess: Optional[Dict], path: str) -> None:
         # The duplicate check now happens before the None check, so a symlink
@@ -866,6 +931,10 @@ def find_sessions(
         if real in seen_real_paths:
             return
         seen_real_paths.add(real)
+        if sess is REPLAY:
+            # Every record in it is already in the report, under the sitting
+            # that did the work.  Nothing is missing, so nothing is said.
+            return
         reason = _why_unusable(path, sess)
         if reason:
             unusable.append((path, reason))
@@ -875,12 +944,18 @@ def find_sessions(
 
     if os.path.isdir(claude_dir):
         sources.append("Claude Code")
-        for path in glob.glob(os.path.join(claude_dir, "**", "*.jsonl"), recursive=True):
-            _add(parse_claude_session(path), path)
+        for path in _oldest_first(
+                glob.glob(os.path.join(claude_dir, "**", "*.jsonl"), recursive=True)):
+            _add(parse_claude_session(path, seen_uuids), path)
 
     if os.path.isdir(codex_dir):
         sources.append("Codex")
-        for path in glob.glob(os.path.join(codex_dir, "**", "*.jsonl"), recursive=True):
+        # Codex records carry no uuid, and its duplicate files are its parallel
+        # workers, whose separate work does add up -- so nothing here is deduped
+        # by record.  It is read in the same order only so the report is the
+        # same however the filesystem hands the paths over.
+        for path in _oldest_first(
+                glob.glob(os.path.join(codex_dir, "**", "*.jsonl"), recursive=True)):
             _add(parse_codex_session(path), path)
 
     # Collapse by session ID: Codex parallel-worker files all carry the same
@@ -890,8 +965,12 @@ def find_sessions(
     # written for, 21 of 1147 Codex sessions had more than one file, 38 of the
     # 42 extra files held commands the richest file did not, and keeping only
     # the richest dropped 299 of those sessions' 616 commands.  None of the
-    # extra files was a byte-for-byte copy of another; real duplicates are the
-    # symlinks already filtered above, by resolved path.
+    # extra files was a byte-for-byte copy of another.
+    #
+    # Claude Code is the opposite case and is handled before this point, by
+    # record uuid: there a second file holding the same records is a resume or
+    # a copied project directory, and adding it up would count the same work
+    # twice.  Merging is only ever safe once the records are known distinct.
     by_id: Dict[str, List[Dict]] = {}
     for s in sessions:
         by_id.setdefault(s["id"], []).append(s)

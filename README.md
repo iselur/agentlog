@@ -372,6 +372,29 @@ the logs this was found with, that hid 299 of 616 commands in the 21 sessions
 that had more than one file, and 38 of the 42 discarded files contained commands
 the kept one did not.
 
+**A Claude Code record is counted once, in the file that had it first.**  Claude
+Code writes the same records into two files in two ordinary situations: `claude
+--resume` opens a new session id and copies the earlier transcript into it
+verbatim before appending anything new, and a copied or moved project directory
+leaves the same log under two names, neither a symlink.  Each record carries its
+own uuid, so a uuid already counted is skipped.  Files are read oldest first, by
+mtime, which means the sitting where the work actually happened is the one that
+reports it — a resume shows the work done in the resume, and the earlier sitting
+keeps its own.  Timestamps are skipped along with the counts, so a resume does
+not inherit the earlier sitting's start time and look like a session that had
+been running since the morning.
+
+This is the opposite treatment from Codex above, and deliberately so: Codex's
+several files are parallel workers whose separate work genuinely adds up, while
+Claude's are copies of one worker's.  Merging is only safe once the records are
+known to be distinct.
+
+Until this was fixed, on the developer's own 269 Claude sessions the totals were
+inflated by 163 commands, 14 written files, 20 errors, 101 turns and 31.1M input
+tokens.  No session was lost — a file that is nothing but replay contributes no
+counts and is not reported as unusable either, since none of its content is
+missing from the report.
+
 ---
 
 ## Privacy

@@ -6,10 +6,22 @@ directory is ever touched.  Set AGENTLOG_HOME or pass --home to override.
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import tempfile
 from typing import List
+
+# Real Claude Code records each carry their own uuid, and the parser now takes
+# that seriously: a uuid seen twice is one event written into two files, and is
+# counted once.  A helper that stamped every record with the same literal made
+# a six-turn session look like one turn repeated, which is a fixture being
+# unrealistic in exactly the direction that hides the thing under test.
+_uuid_counter = itertools.count(1)
+
+
+def _next_uuid(prefix: str) -> str:
+    return "{}-{:08d}".format(prefix, next(_uuid_counter))
 
 
 def make_claude_project(
@@ -45,6 +57,7 @@ def claude_user(
     cwd: str = "/home/test/myproject",
     version: str = "2.1.0",
     text: str = "do the thing",
+    uuid: str = "",
 ) -> dict:
     return {
         "type": "user",
@@ -53,7 +66,7 @@ def claude_user(
         "cwd": cwd,
         "version": version,
         "message": {"role": "user", "content": text},
-        "uuid": "uuid-user-1",
+        "uuid": uuid or _next_uuid("uuid-user"),
     }
 
 
