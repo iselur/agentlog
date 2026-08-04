@@ -367,6 +367,22 @@ def _write_utf8_if_the_locale_said_nothing() -> None:
 
 
 def main(argv=None) -> int:
+    """Entry point, and the one place ctrl-c is allowed to mean something.
+
+    Reading a year of logs takes a moment, and a moment is long enough to
+    change your mind in.  Interrupting a command that is taking longer than you
+    expected is ordinary; answering it with a traceback is not, because a
+    traceback reads as a crash and sends people looking for a bug they caused
+    on purpose.  130 is the shell's own spelling of "stopped by ctrl-c", and it
+    keeps `agentlog today > digest.md && mail-it` from mailing half a day.
+    """
+    try:
+        return _run(argv)
+    except KeyboardInterrupt:
+        return 130
+
+
+def _run(argv=None) -> int:
     _write_utf8_if_the_locale_said_nothing()
     parser = _build_parser()
     args = parser.parse_args(argv)
