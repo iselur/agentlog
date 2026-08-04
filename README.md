@@ -129,17 +129,22 @@ For each session it derives:
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final `total_token_usage` snapshot, falling back to summing the per-turn `last_token_usage` blocks in a log too old to carry it |
 
 **A turn is a time you said something.** Claude Code writes a `type: "user"`
-record for three different things, and only one of them is a person: a tool
-result fed back into the loop is the agent's own machinery, and a record marked
-`isSidechain: true` is a prompt the agent wrote for a subagent. Counting all
-three reported 38318 turns across 896 real session logs where 2314 were typed,
-and one session read 3637 for a day with 211. That kind of error is worth more
+record for four different things, and only one of them is a person: a tool
+result fed back into the loop is the agent's own machinery, a record marked
+`isSidechain: true` is a prompt the agent wrote for a subagent, and a record
+marked `isMeta: true` is Claude Code putting text into the conversation on its
+own account — the caveat that precedes a slash command's output, the body of a
+skill being loaded, a message relayed from another session, a nudge to
+continue, the placeholder standing in for a pasted image. Counting all four
+reported 38318 turns across 896 real session logs where 2314 were typed, and
+one session read 3637 for a day with 211. That kind of error is worth more
 care than most, because a reader cannot catch it: an under-count can be checked
 by adding up the sources, but there is nothing to check an over-count against —
 it just reads as a long day. The subagent's *work* still counts; a `pytest -x`
-it ran is a command that ran. Only the prompt is not yours. A record with no
-`isSidechain` field at all — older logs — is counted, since dropping real turns
-would be the opposite mistake.
+it ran is a command that ran, and so does everything that happened around an
+injected record. Only the claim that you spoke is dropped. A record with
+neither field — older logs — is counted, since dropping real turns would be the
+opposite mistake, and only an explicit `true` counts as either.
 
 Tool-use IDs are deduplicated so streaming-split records are not double-counted.
 Malformed lines are skipped silently; their count appears under `--verbose`.

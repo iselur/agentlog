@@ -319,16 +319,23 @@ def parse_claude_session(
                     s["failed_cmds"].append(label)
                     s["events"].append((ts, "error", label))
 
-            # A `user` record is written for three different things and only
+            # A `user` record is written for four different things and only
             # one of them is a person: a tool result is the agent feeding
-            # itself, and a sidechain record is a prompt the agent wrote for a
-            # subagent.  Counting all three said 38318 turns on 896 real logs
-            # where 2314 were typed — and an over-count is the one a reader
-            # cannot catch, because there is nothing to check it against.
+            # itself, a sidechain record is a prompt the agent wrote for a
+            # subagent, and an `isMeta` record is Claude Code putting text into
+            # the conversation on its own account — the caveat before a slash
+            # command's output, the body of a skill being loaded, a message
+            # relayed from another session, a nudge to continue, the
+            # placeholder standing in for a pasted image.  Counting all four
+            # said 38318 turns on 896 real logs where 2314 were typed — and an
+            # over-count is the one a reader cannot catch, because there is
+            # nothing to check it against.
             #
-            # Only an explicit true is a subagent: the field is absent on older
-            # logs, and dropping those turns would be the opposite error.
-            if saw_result or obj.get("isSidechain") is True:
+            # Only an explicit true counts as either: both fields are absent on
+            # older logs, and dropping those turns would be the opposite error.
+            if (saw_result
+                    or obj.get("isSidechain") is True
+                    or obj.get("isMeta") is True):
                 continue
             s["user_turns"] += 1
             s["events"].append((ts, "turn", ""))
