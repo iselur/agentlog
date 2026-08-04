@@ -304,22 +304,33 @@ field of the first `user` record in a session.  If a session starts before a
 `user` record is written, the project falls back to a guess derived from the
 directory name, which is ambiguous when paths contain dashes.
 
-**Wall duration is elapsed time, not effort.**  A session's duration is (last
-timestamp – first timestamp) in its file; the logs contain no reliable
-elapsed-time field, so idle time between tool calls is included.  The headline
-figure for a period is the **union** of all session intervals clipped to that
-period, not their sum — agents run in parallel, and summing them produced
-"111h in a 24h day".  It therefore answers "how much of the day had an agent
-working" rather than "how many agent-hours were spent".
+**Time nobody was working is not active time.**  A session is bursts of work
+with nothing in between, so a stretch of silence longer than **five minutes** is
+not counted.  Measuring instead from a session's first record to its last —
+which is what this used to do — billed lunch, the commute and the whole night
+as work: on the logs this was written against it came to **14×** the time Claude
+Code itself records for the turns in those sessions, and five minutes is the
+threshold that matches them (0.93 of the recorded time in aggregate, a median of
+1.10 per session).  Being slightly under is the better way to be wrong for a
+number somebody might quote.
+
+Each session block therefore prints both — `3m 00s active, 6h 01m open` — and
+`--json` gives you `active_s` beside `duration_s`, because "how long was this
+session open" is a real and separate question.
+
+The headline figure for a period is the **union** of every session's working
+stretches clipped to that period, not their sum — agents run in parallel, and
+summing them produced "111h in a 24h day".  It answers "how much of the day had
+an agent working" rather than "how many agent-hours were spent".
 
 **A session that spans the window is counted only for its share of it.**  A
 session running from Tuesday to Friday appears in Wednesday's digest, but only
 the files, commands, turns and errors timestamped inside Wednesday are counted,
-and the duration shown runs from the first thing it did on Wednesday to the
-last — not from midnight.  Leave a session open overnight, come back and run
-one command at 09:16, and clipping to the *edge* of the day reported `9h 16m
-active` beside `1 command`: every hour spent asleep counted as work.  Sessions
-whose records carry no usable timestamps fall back to their lifetime totals.
+and the duration shown is what it worked on Wednesday — not the span from
+midnight.  Leave a session open overnight, come back and run one command at
+09:16, and clipping to the *edge* of the day reported `9h 16m active` beside
+`1 command`: every hour spent asleep counted as work.  Sessions whose records
+carry no usable timestamps fall back to their lifetime totals.
 
 **Consecutive days add up.**  A day starts at local midnight and ends *before*
 the next one, so anything stamped exactly on the stroke belongs to the day it

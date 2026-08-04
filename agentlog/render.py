@@ -8,6 +8,8 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
+from .parser import active_spans
+
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -201,29 +203,60 @@ def unique_short_ids(sessions: List[Dict], minimum: int = 8) -> Dict[str, str]:
 
 
 def _window_duration(s: Dict) -> Optional[float]:
-    """Seconds to report for a session: its share of the window, if clipped."""
+    """Seconds to report for a session: the time it spent working.
+
+    Not the time it was open.  A session sitting idle from lunch until evening
+    was not working through the afternoon, and counting from its first event to
+    its last said it was.  ``duration_s`` still answers "how long was this open",
+    which is a real and different question, and the session block prints both.
+    """
+    spans = s.get("active_spans")
+    if spans is None:
+        # `list` and `show` ask for no window, so nothing has worked the spans
+        # out for them.  The column is headed DUR in both places and it should
+        # mean the same thing there as in the digest.
+        spans = active_spans(s)
+    if spans:
+        return sum((b - a).total_seconds() for a, b in spans)
     if s.get("window_s") is not None:
         return s["window_s"]
     return s["duration_s"]
 
 
+def _idled(s: Dict) -> bool:
+    """Whether this session was open appreciably longer than it was busy.
+
+    A minute of slack, so that a session which merely rounds oddly does not
+    sprout a second number saying the same thing twice.
+    """
+    active = _window_duration(s)
+    whole = s.get("duration_s")
+    return (active is not None and whole is not None
+            and active + 60 < whole)
+
+
 def active_seconds(sessions: List[Dict]) -> float:
-    """Wall-clock time covered by at least one session.
+    """Wall-clock time during which at least one session was working.
 
     Sessions run concurrently — parallel Codex workers routinely overlap — so
     summing their durations reports more hours than the day contains.  This
     merges the intervals instead, clipped to the requested window when one was
     applied.
+
+    The intervals are the stretches a session was *busy*, not the whole span it
+    was open: two agents left running through the night are not sixteen hours of
+    work, and neither is one.  See ``parser.active_spans``.
     """
     spans = []
     for s in sessions:
-        start = s.get("win_start") or s["start"]
-        if start is None:
-            continue
-        end = s.get("win_end") or s["end"] or start
-        if end < start:
-            end = start
-        spans.append((start, end))
+        for start, end in (s.get("active_spans")
+                           if s.get("active_spans") is not None
+                           else active_spans(s)):
+            if start is None:
+                continue
+            if end is None or end < start:
+                end = start
+            spans.append((start, end))
     if not spans:
         return 0.0
 
@@ -482,6 +515,11 @@ def _render_session_text(
     duration = _fmt_duration(_window_duration(s))
     if s.get("window_s") is not None:
         duration += f" in window, {_fmt_duration(s['duration_s'])} total"
+    elif _idled(s):
+        # It was open longer than it was busy, and the time range printed beside
+        # this says so — without the second number the two look like they
+        # disagree.
+        duration += f" active, {_fmt_duration(s['duration_s'])} open"
 
     title = s.get("ai_title")
     header = f"  {short_id}  {project}  {source_tag}"
@@ -705,6 +743,10 @@ def _session_for_json(s: Dict) -> Dict:
         out["start"] = s["start"].isoformat()
     if s["end"]:
         out["end"] = s["end"].isoformat()
+    # `duration_s` is how long the session was open, and on its own it invites
+    # exactly the mistake the text output stopped making.  Say the working time
+    # too, under its own name, so a script does not have to add up the spans.
+    out["active_s"] = _window_duration(s)
     return out
 
 

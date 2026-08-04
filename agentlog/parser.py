@@ -137,6 +137,57 @@ def _dedup(items: List[str]) -> List[str]:
     return out
 
 
+# A silence longer than this is not work.  Five minutes, because that is the
+# threshold that matches the ground truth: Claude Code writes a `turn_duration`
+# record saying how long each turn really took, and against the 76 sessions on
+# this machine that carry them, splitting at five minutes comes to 0.93 of the
+# recorded time in aggregate and a median of 1.10 per session.  Ten minutes
+# overshoots on both counts, and measuring first-event-to-last — which is what
+# this replaced — came to 14x.  See tests/test_idle_gaps.py.
+IDLE_GAP_S = 300
+
+
+def active_spans(s: Dict, start: Optional[datetime] = None,
+                 end: Optional[datetime] = None,
+                 end_open: bool = False) -> List[tuple]:
+    """The stretches during which a session was actually busy.
+
+    A session is not one continuous piece of work.  It is bursts of it with
+    nothing in between, and the gaps are somebody at lunch or asleep — a session
+    left open overnight did nothing at 3am.  Measuring from its first event to
+    its last therefore billed the night as work, and on real logs that came to
+    fourteen times the truth.  Each returned pair is a stretch with no silence
+    longer than ``IDLE_GAP_S`` in it.
+
+    A session with no timestamped events keeps its whole span as one stretch:
+    that is the same fallback the counting takes, for the same reason — we
+    cannot see inside it, and a lifetime total is a worse answer than a clipped
+    one but a made-up one is worse than both.
+    """
+    times = sorted(
+        ts for ts, _kind, _value in (s.get("events") or [])
+        if ts is not None
+        and (start is None or ts >= start)
+        and (end is None or (ts < end if end_open else ts <= end))
+    )
+    if not times:
+        first = start if start is not None else s.get("start")
+        last = end if end is not None else (s.get("end") or first)
+        if first is None or last is None or last < first:
+            return []
+        return [(first, last)]
+
+    spans: List[tuple] = []
+    opened = previous = times[0]
+    for ts in times[1:]:
+        if (ts - previous).total_seconds() > IDLE_GAP_S:
+            spans.append((opened, previous))
+            opened = ts
+        previous = ts
+    spans.append((opened, previous))
+    return spans
+
+
 def _empty_session(session_id: str, source: str) -> Dict:
     return {
         "id": session_id,

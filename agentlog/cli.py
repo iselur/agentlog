@@ -41,7 +41,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from . import __version__
-from .parser import find_sessions
+from .parser import active_spans, find_sessions
 from .render import (
     render_digest,
     render_json,
@@ -240,12 +240,12 @@ def _filter_sessions(
     A session that began yesterday and is still running belongs in ``today``;
     filtering on the start timestamp alone made long-running sessions vanish.
     When a session extends past either edge of the window, a copy is returned
-    carrying ``window_s`` — the seconds between the first and the last thing it
-    did inside the window — so totals reflect the period asked for rather than
-    the session's whole lifetime.  Between the first and last *event*, not
-    between the window's own edges: a session left open overnight did nothing
-    at local midnight, and billing it from there reported a night's sleep as
-    nine hours of work.
+    carrying ``window_s`` — the time it spent *working* inside the window — so
+    totals reflect the period asked for rather than the session's whole
+    lifetime.  Working, not open: a session left running overnight did nothing
+    at 3am, so every copy also carries ``active_spans``, the stretches with no
+    silence longer than ``parser.IDLE_GAP_S`` in them, and that is what the
+    reported figures are built from.  See ``tests/test_idle_gaps.py``.
     """
     out = []
     for s in sessions:
@@ -289,8 +289,14 @@ def _filter_sessions(
         s = dict(s)
         s["win_start"] = clipped_start
         s["win_end"] = clipped_end
+        # The stretches it was actually busy, for every session and not just the
+        # clipped ones: a session that sits wholly inside the day is exactly the
+        # one that can sit idle inside it too, and that is the one that reported
+        # `14h 21m active` against three hours of recorded turns.
+        spans = active_spans(s, clipped_start, clipped_end, end_open)
+        s["active_spans"] = spans
         if clip:
-            s["window_s"] = (clipped_end - clipped_start).total_seconds()
+            s["window_s"] = sum((b - a).total_seconds() for a, b in spans)
             _clip_counts(s, clipped_start, clipped_end, end_open)
         out.append(s)
     return out

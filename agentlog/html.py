@@ -17,6 +17,7 @@ from .render import (
     _fmt_time,
     _fmt_tokens,
     _dedup_merge,
+    _idled,
     _shorten_cmd,
     _window_duration,
     group_by_project,
@@ -269,6 +270,8 @@ def _render_card(s: Dict, shorts: Optional[Dict[str, str]] = None) -> str:
     dur = _fmt_duration(_window_duration(s))
     if s.get("window_s") is not None:
         dur += f" in window, {_fmt_duration(s['duration_s'])} total"
+    elif _idled(s):
+        dur += f" active, {_fmt_duration(s['duration_s'])} open"
     meta_items = [
         _tag("span", f"⏱ {_e(when)}  ({_e(dur)})"),
         _tag("span", f"{_e(str(s['user_turns']))} turn{'s' if s['user_turns'] != 1 else ''}"),

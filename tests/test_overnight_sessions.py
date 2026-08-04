@@ -100,13 +100,28 @@ class TestTheDurationMatchesWhatHappened(unittest.TestCase):
         self.assertEqual(got["win_start"], first_today)
 
     def test_window_seconds_agrees(self):
-        # The same number is reported separately as `window_s`.
+        # The same half hour is reported separately as `window_s` — for a
+        # session that worked through it.  Steadily, because a silence longer
+        # than the idle gap is no longer counted; see tests/test_idle_gaps.py.
+        midnight = _midnight_today()
+        events = [_cmd(midnight - timedelta(hours=1))]
+        events += [_cmd(midnight + timedelta(hours=9, minutes=m))
+                   for m in range(0, 31, 2)]
+        got = _filter_sessions([_session(events)], since=midnight)[0]
+        self.assertEqual(got["window_s"], 30 * 60)
+
+    def test_window_seconds_is_the_working_part_of_that_span(self):
+        # The edges still sit half an hour apart — the test above says so — but
+        # two commands with nothing between them are not half an hour of work,
+        # and `window_s` is what gets reported as time spent.
         midnight = _midnight_today()
         s = _session([_cmd(midnight - timedelta(hours=1)),
                       _cmd(midnight + timedelta(hours=9)),
                       _cmd(midnight + timedelta(hours=9, minutes=30))])
         got = _filter_sessions([s], since=midnight)[0]
-        self.assertEqual(got["window_s"], 30 * 60)
+        self.assertEqual((got["win_end"] - got["win_start"]).total_seconds(),
+                         30 * 60)
+        self.assertEqual(got["window_s"], 0.0)
 
     def test_the_trailing_edge_too(self):
         # The same mistake at the other end: an explicit --until must not
@@ -205,7 +220,10 @@ class TestTheReportItself(unittest.TestCase):
                          + out)
 
     def test_an_ordinary_day_still_reports_its_span(self):
-        self._write([40, 10])
+        # Half an hour of steady work, so that the idle-gap rule has nothing to
+        # take off it and the headline is the plain span.  The rule itself has
+        # its own file, tests/test_idle_gaps.py.
+        self._write(list(range(40, 9, -2)))
         out = self._report()
         self.assertIn("30m", out, out)
 
