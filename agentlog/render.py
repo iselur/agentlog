@@ -296,8 +296,30 @@ def summary_line(sessions: List[Dict]) -> str:
         parts.append(f"{cmds} command{'s' if cmds != 1 else ''}")
     if errors:
         parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    compactions = sum(len(s.get("compactions") or []) for s in sessions)
+    if compactions:
+        parts.append(f"{compactions} compaction{'s' if compactions != 1 else ''}")
 
     return " · ".join(parts)
+
+
+def compaction_note(sessions: List[Dict]) -> str:
+    """One line about what compaction cost, or '' if it did not happen.
+
+    The count alone cannot be read: twelve compactions in one session is a
+    session that should have been split, and twelve across twelve sessions is
+    an ordinary week.  So the number of sessions it happened in goes in the
+    same line as the count.
+    """
+    compactions = [c for s in sessions for c in (s.get("compactions") or [])]
+    if not compactions:
+        return ""
+    in_sessions = sum(1 for s in sessions if s.get("compactions"))
+    spent = _fmt_duration(sum(c.get("duration_s", 0.0) for c in compactions))
+    dropped = sum(c.get("dropped", 0) for c in compactions)
+    return (f"compacted {len(compactions)}x in {in_sessions} "
+            f"session{'s' if in_sessions != 1 else ''}"
+            f" · {spent} spent, {dropped:,} tokens dropped")
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +501,11 @@ def render_digest(
     lines.append("  " + " · ".join(tail))
     if len(groups) > 1 and spent > active_seconds(sessions) * 1.15:
         lines.append("  projects overlap — agents ran in parallel, so their times sum past the total")
+    # Part of where the day went, and the only part of it that leaves no other
+    # trace: the work a session redid after forgetting it looks like new work.
+    compacted = compaction_note(sessions)
+    if compacted:
+        lines.append("  " + compacted)
     lines.append("  more: agentlog list · agentlog show ID · agentlog --sessions")
 
     if verbose:

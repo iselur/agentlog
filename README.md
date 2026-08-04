@@ -161,6 +161,17 @@ prints a `context` line when there was one:
 context  compacted 98x — 3h 59m spent, 9,944,222 tokens dropped
 ```
 
+The digest says it too, because `show` needs a session id and a session id
+needs you to already suspect which session to look at:
+
+```
+compacted 127x in 6 sessions · 4h 54m spent, 13,239,126 tokens dropped
+```
+
+The number of sessions is in that line on purpose.  Twelve compactions in one
+session is a session that should have been split; twelve across twelve sessions
+is an ordinary week, and the count alone cannot tell them apart.
+
 Across the 896 logs this was developed against: 313 compactions in 49 sessions,
 twelve hours of wall-clock, a median of 2m17s each, and a median of 13% of the
 context surviving.  Manual `/compact` runs are counted separately from

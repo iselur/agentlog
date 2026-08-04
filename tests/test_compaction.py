@@ -276,5 +276,73 @@ class TestItShowsUpWhereSomebodyWillSeeIt(CompactionCase):
         self.assertIsInstance(data[0]["compactions"][0]["at"], str)
 
 
+class TestTheDigestSaysItToo(CompactionCase):
+    """`show` needs a session id, which needs you to already suspect it.
+
+    The digest is the view a person actually runs.  A day that lost four hours
+    to compaction and a day that did not look identical there, so the number
+    that would explain the day is behind a command nobody reaches for.
+    """
+
+    def sessions(self, n_compactions, sid=SID):
+        records = [claude_user(sid, _at(9))]
+        cumulative = 0
+        for i in range(n_compactions):
+            cumulative += 291000
+            records.append(boundary(_at(10 + i), 300000, 9000, cumulative,
+                                    session_id=sid))
+        records.append(claude_assistant(sid, _at(20)))
+        return self.sessions_from(records)
+
+    def test_the_digest_reports_the_cost(self):
+        out = render.render_digest(self.sessions(2), "today")
+        line = [ln for ln in out.splitlines() if "compact" in ln]
+        self.assertEqual(len(line), 1, out)
+        self.assertIn("4m 34s", line[0])
+        self.assertIn("582,000", line[0])
+
+    def test_a_day_with_no_compaction_says_nothing_about_it(self):
+        s = self.one([claude_user(SID, _at(9)),
+                      claude_assistant(SID, _at(9, 1))])
+        self.assertNotIn("compact", render.render_digest([s], "today"))
+
+    def test_the_digest_says_how_many_sessions_it_happened_in(self):
+        # Twelve compactions in one session is a session that should have been
+        # split; twelve across twelve sessions is a normal week.  The count
+        # alone cannot tell them apart.
+        #
+        # Three other sessions ran that day and never compacted.  Counting all
+        # four here would say the whole day was fighting its context when one
+        # session was — the same number, describing the wrong thing.
+        make_claude_project(self.tmp, "quiet", [
+            [claude_user(f"quiet-{i}", _at(9)),
+             claude_assistant(f"quiet-{i}", _at(9, 30))]
+            for i in range(3)
+        ])
+        sessions = self.sessions(3)
+        self.assertEqual(len(sessions), 4, [s["id"] for s in sessions])
+        out = render.render_digest(sessions, "today")
+        line = [ln for ln in out.splitlines() if "compact" in ln][0]
+        self.assertIn("in 1 session ", line + " ")
+        self.assertIn("3x", line)
+
+    def test_the_summary_line_counts_them(self):
+        # This is the line markdown and HTML both print at the top.
+        line = render.summary_line(self.sessions(2))
+        self.assertIn("2 compactions", line)
+
+    def test_the_summary_line_is_unchanged_when_there_were_none(self):
+        s = self.one([claude_user(SID, _at(9)),
+                      claude_assistant(SID, _at(9, 1))])
+        self.assertNotIn("compact", render.summary_line([s]))
+
+    def test_one_compaction_is_singular(self):
+        self.assertIn("1 compaction ", render.summary_line(self.sessions(1)) + " ")
+
+    def test_markdown_carries_it(self):
+        self.assertIn("2 compactions",
+                      render.render_markdown(self.sessions(2)))
+
+
 if __name__ == "__main__":
     unittest.main()
