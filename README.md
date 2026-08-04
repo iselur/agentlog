@@ -13,7 +13,7 @@ Everything is organised by project, because that is the first thing you want to 
 ## 30-second quickstart
 
 ```sh
-pip install 'stillworks[all]'   # all four agent tools, including this one
+pip install 'stillworks[all]'   # all five agent tools, including this one
 pip install agentlog-tool       # or just this one (the command is `agentlog`)
 
 agentlog today
