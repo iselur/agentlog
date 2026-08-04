@@ -122,6 +122,9 @@ def _failed(value) -> bool:
     return False
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _dedup(items: List[str]) -> List[str]:
     """Deduplicate a list while preserving first-seen order."""
     seen: set = set()
@@ -655,6 +658,77 @@ def _why_unusable(path: str, sess: Optional[Dict]) -> str:
     return NO_RECORDS
 
 
+def _merge_sessions(group: List[Dict]) -> Dict:
+    """Fold several files of one session into the session they describe.
+
+    Codex writes one file per parallel worker and gives them all the same
+    session_id.  Every one of them is a different part of the same session's
+    work, so the lists are unioned and the counts are added up.
+
+    The lists are unioned and not concatenated: ``commands`` and the two file
+    lists have always been sets-in-order within a single file, and a merge that
+    changed what they mean would trade this bug for an over-count, which is
+    worse — an under-count can be caught by adding up the source files, an
+    over-count cannot be caught at all.  ``errors``, ``user_turns``, the tokens
+    and ``write_counts`` are genuine per-worker tallies, and do add.
+    """
+    if len(group) == 1:
+        return group[0]
+    # Oldest first, so the merged lists read in the order the work happened
+    # rather than in the order the filesystem handed the files over.
+    ordered = sorted(group, key=lambda s: (s["start"] or _EPOCH, s["end"] or _EPOCH))
+    merged = dict(ordered[0])
+    merged["events"] = []
+    merged["models"] = []
+    merged["files_read"] = []
+    merged["files_written"] = []
+    merged["commands"] = []
+    merged["failed_cmds"] = []
+    merged["write_counts"] = {}
+    merged["user_turns"] = 0
+    merged["errors"] = 0
+    merged["skipped_lines"] = 0
+    tok_in = tok_out = None
+    for s in ordered:
+        merged["events"].extend(s["events"])
+        merged["models"].extend(s["models"])
+        merged["files_read"].extend(s["files_read"])
+        merged["files_written"].extend(s["files_written"])
+        merged["commands"].extend(s["commands"])
+        merged["failed_cmds"].extend(s["failed_cmds"])
+        for path, n in s["write_counts"].items():
+            merged["write_counts"][path] = merged["write_counts"].get(path, 0) + n
+        merged["user_turns"] += s["user_turns"]
+        merged["errors"] += s["errors"]
+        merged["skipped_lines"] += s["skipped_lines"]
+        if s["tokens_in"] is not None:
+            tok_in = (tok_in or 0) + s["tokens_in"]
+        if s["tokens_out"] is not None:
+            tok_out = (tok_out or 0) + s["tokens_out"]
+        # A worker that never learned the project or the version leaves the
+        # field empty; one that did fills it in for the session.
+        for field in ("project", "project_name", "version", "ai_title"):
+            if not merged.get(field) and s.get(field):
+                merged[field] = s[field]
+    # A record whose timestamp would not parse still has an event; it sorts to
+    # the front rather than raising halfway through the merge.
+    merged["events"].sort(key=lambda e: e[0] or _EPOCH)
+    merged["models"] = _dedup(merged["models"])
+    merged["files_read"] = _dedup(merged["files_read"])
+    merged["files_written"] = _dedup(merged["files_written"])
+    merged["commands"] = _dedup(merged["commands"])
+    merged["tokens_in"] = tok_in
+    merged["tokens_out"] = tok_out
+    starts = [s["start"] for s in ordered if s["start"]]
+    ends = [s["end"] for s in ordered if s["end"]]
+    merged["start"] = min(starts) if starts else None
+    merged["end"] = max(ends) if ends else None
+    merged["duration_s"] = (
+        (merged["end"] - merged["start"]).total_seconds()
+        if merged["start"] and merged["end"] else None)
+    return merged
+
+
 def find_sessions(
     home_dir: Optional[str] = None,
 ) -> tuple[List[Dict], List[str], List[tuple]]:
@@ -704,27 +778,21 @@ def find_sessions(
         for path in glob.glob(os.path.join(codex_dir, "**", "*.jsonl"), recursive=True):
             _add(parse_codex_session(path), path)
 
-    # Deduplicate by session ID: Codex parallel-worker files all carry the
-    # same session_id in their session_meta record.  Keep the one session that
-    # has the most user turns (richest data); fall back to longest duration.
-    by_id: Dict[str, Dict] = {}
+    # Collapse by session ID: Codex parallel-worker files all carry the same
+    # session_id in their session_meta record, so they are one session and
+    # belong on one row.  They are merged rather than chosen between, because
+    # each worker file records that worker's own work: on the machine this was
+    # written for, 21 of 1147 Codex sessions had more than one file, 38 of the
+    # 42 extra files held commands the richest file did not, and keeping only
+    # the richest dropped 299 of those sessions' 616 commands.  None of the
+    # extra files was a byte-for-byte copy of another; real duplicates are the
+    # symlinks already filtered above, by resolved path.
+    by_id: Dict[str, List[Dict]] = {}
     for s in sessions:
-        sid = s["id"]
-        existing = by_id.get(sid)
-        if existing is None:
-            by_id[sid] = s
-        else:
-            # Prefer the entry with more turns, then longer duration
-            s_turns = s["user_turns"]
-            e_turns = existing["user_turns"]
-            s_dur = s["duration_s"] or 0.0
-            e_dur = existing["duration_s"] or 0.0
-            if s_turns > e_turns or (s_turns == e_turns and s_dur > e_dur):
-                by_id[sid] = s
-    sessions = list(by_id.values())
+        by_id.setdefault(s["id"], []).append(s)
+    sessions = [_merge_sessions(group) for group in by_id.values()]
 
     # Sort newest-first; sessions without a start time go to the end
-    _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    sessions.sort(key=lambda s: s["start"] or _epoch, reverse=True)
+    sessions.sort(key=lambda s: s["start"] or _EPOCH, reverse=True)
     unusable.sort()
     return sessions, sources, unusable

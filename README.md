@@ -328,10 +328,16 @@ is not extracted or displayed regardless of any flag.
 synthetic fixtures.  It cannot guarantee correct parsing of every schema variant
 in the wild.
 
-**Codex session deduplication keeps one file per session ID.**  When Codex runs
-parallel worker agents, all workers share the same session_id.  agentlog keeps
-the file with the most user turns and discards the rest.  Activity recorded only
-in the discarded workers (commands, errors) is not surfaced.
+**Codex parallel workers are merged into one session.**  When Codex runs worker
+agents, all of them share one session_id and each writes its own file.  They are
+one session, so they are shown as one row, with the commands and files unioned
+and the turns, errors and tokens added up.  Times therefore span the whole fan
+-out rather than any single worker, and a per-worker breakdown is not available.
+
+Until v0.2.3 the extra files were discarded and only the richest one kept.  On
+the logs this was found with, that hid 299 of 616 commands in the 21 sessions
+that had more than one file, and 38 of the 42 discarded files contained commands
+the kept one did not.
 
 ---
 

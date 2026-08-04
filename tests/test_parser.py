@@ -385,7 +385,7 @@ class TestFindSessions(unittest.TestCase):
                 codex_user_message("2026-08-02T10:00:01Z"),
             ],
         )
-        # Worker B: 2 user turns — should be kept as the richer entry
+        # Worker B: 2 user turns
         _write_jsonl(
             os.path.join(codex_dir, "rollout-2026-08-02T10-00-01-019fc000-aaaa-7000-0000-000000000099.jsonl"),
             [
@@ -397,8 +397,10 @@ class TestFindSessions(unittest.TestCase):
         sessions, _, _unusable = find_sessions(self.tmp)
         # Must be exactly one session
         self.assertEqual(len(sessions), 1)
-        # Must be the richer one (2 turns)
-        self.assertEqual(sessions[0]["user_turns"], 2)
+        # And it must account for both workers.  This used to expect 2 — the
+        # richer file's turns, with worker A's discarded — which is how the
+        # under-count in tests/test_parallel_workers.py got in.
+        self.assertEqual(sessions[0]["user_turns"], 3)
 
 
 class TestCacheTokens(unittest.TestCase):
