@@ -100,6 +100,18 @@ def claude_log(day):
          "sessionId": CLAUDE_SID,
          # A summary is a sentence the model wrote about the conversation.
          "summary": "set up deployment using " + SECRET},
+        # Two record types agentlog has no branch for.  They are in the fixture
+        # because that is exactly why they are worth having: a `user` record is
+        # obviously message text and is handled carefully, and these carry the
+        # same thing somewhere nobody is looking.  See TestTheRecordsNobodyReads.
+        {"type": "queue-operation", "operation": "enqueue",
+         "timestamp": day + "T09:00:45Z", "sessionId": CLAUDE_SID,
+         "content": "then rotate the key " + SECRET},
+        {"type": "frame-link", "sessionId": CLAUDE_SID,
+         "timestamp": day + "T09:00:50Z",
+         "path": "/home/you/api/out/report.html",
+         "frameUrl": "https://example.invalid/artifact/1",
+         "title": "How do I revoke " + SECRET + "?"},
     ]) + "\n"
 
 
@@ -262,6 +274,83 @@ class TestMessageTextNeverReachesTheOutput(Case):
         p = self.run_log("--sessions")
         self.assertNotIn(SECRET, p.stdout + p.stderr)
         self.assertIn(COMMAND, p.stdout)
+
+
+class TestTheRecordsNobodyReads(Case):
+    """The promise has to hold for records no branch was written for.
+
+    Claude Code writes more into a session file than the conversation.  Two of
+    those types carry message text, and neither is a `user` record, so neither
+    passes any of the care that one gets:
+
+      - `queue-operation` (4983 on this machine) carries, in `content`, the
+        whole of a prompt somebody typed while the agent was busy.
+      - `frame-link` (104) carries, in `title`, a question of theirs turned
+        into a heading.
+
+    agentlog has no branch for either, so today the marker cannot come out.
+    That is the point of pinning it: "we never wrote the code to read that" is
+    a fact about this version, and the sentence in the README is a promise
+    about every version.  The wide output surface is what makes it worth
+    pinning here — the HTML digest is a file somebody sends to somebody else,
+    and a leak into it does not stay on one machine.
+    """
+
+    def test_no_mode_prints_it(self):
+        for mode in ((), ("--sessions",), ("--json",), ("--verbose",),
+                     ("list",), ("show", CLAUDE_SID[:8])):
+            with self.subTest(mode=mode or ("default",)):
+                p = self.run_log(*mode)
+                self.assertNotIn(SECRET, p.stdout + p.stderr)
+
+    def test_neither_file_output_carries_it(self):
+        for flag, name in (("--html", "digest.html"), ("--md", "digest.md")):
+            with self.subTest(output=flag):
+                dest = os.path.join(self.out, name)
+                p = self.run_log(flag, dest)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                with open(dest, encoding="utf-8") as fh:
+                    body = fh.read()
+                self.assertNotIn(SECRET, body)
+                self.assertIn(COMMAND, body, "the digest reported no activity")
+
+    def test_a_queued_prompt_is_not_a_turn(self):
+        # Tempting, because an enqueue is the most literal record there is of a
+        # person typing.  It is still wrong twice over: the prompt is written
+        # again as a `user` record when it is sent, and more than half are never
+        # sent at all — 2494 enqueues on this machine against 1121 dequeues and
+        # 1358 removes.  Counting them would report turns that never happened
+        # and count the rest twice.
+        p = self.run_log("--json", "--sessions")
+        data = json.loads(p.stdout)
+        self.assertIn(CLAUDE_SID[:8], json.dumps(data),
+                      "the Claude log was not read")
+        s = _claude_session(data)
+        # Both the running count and the event stream, because they are kept
+        # separately — the count is the parser's and the stream is what a
+        # clipped window is recounted from, so a change to one and not the
+        # other is a thing that happens and would slip past a single assertion.
+        self.assertEqual(s["user_turns"], 1, s)
+        self.assertEqual(len([e for e in s["events"] if e[1] == "turn"]), 1, s)
+
+    def test_the_fixture_really_contains_them(self):
+        # Without this the tests above pass on a fixture that lost the records
+        # in an edit, which is the same shape of vacuous pass this file was
+        # written to avoid.
+        log = claude_log(self.day)
+        types = [json.loads(l)["type"] for l in log.splitlines()]
+        self.assertIn("queue-operation", types)
+        self.assertIn("frame-link", types)
+        self.assertEqual(log.count(SECRET), 9, "the marker moved")
+
+
+def _claude_session(data):
+    """The one session dict for the Claude fixture, out of `--json --sessions`."""
+    for s in data:
+        if s.get("id") == CLAUDE_SID:
+            return s
+    raise AssertionError("no session for " + CLAUDE_SID + ": " +
+                         json.dumps(data)[:2000])
 
 
 class TestTheSessionLogsAreNotWrittenTo(Case):

@@ -412,6 +412,18 @@ Message text is never extracted or displayed.
 The HTML digest may contain file paths and shell commands from your sessions.
 Review it before sharing it with others.
 
+That promise has to hold for the parts of a session file that are not the
+conversation, and two of those carry message text where nobody looks for it: a
+`queue-operation` record holds the whole of a prompt you typed while the agent
+was busy, and a `frame-link` record holds a question of yours turned into a
+heading. There are 4983 of the first and 104 of the second in this machine's
+logs. agentlog has no branch for either, and `tests/test_privacy_claims.py`
+keeps them in its fixture — checked against the HTML digest too, since that one
+leaves the machine — so the day somebody writes a branch, the tests are what
+they meet first. A queued prompt is also not counted as a turn: more than half
+are never sent (2494 enqueued against 1121 dequeued here), and the ones that
+are get written again as a normal record when they go.
+
 ---
 
 
