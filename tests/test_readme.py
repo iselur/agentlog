@@ -15,12 +15,15 @@ _README = os.path.join(
 
 _WORDS = ("two", "three", "four", "five", "six", "seven", "eight")
 
-# "all five agent tools", "Five tools for working with", "all five:" — the three
-# shapes the sentence takes.  Anchored on the word "tools" or on "all", because
-# a bare number word in prose is not a claim about the family.
+# "all five agent tools", "Five tools for working with", "all five:",
+# "all five, and ..." — the shapes the sentence takes.  Anchored on the word
+# "tools", or on "all" followed by punctuation, because a bare number word in
+# prose is not a claim about the family: "a user record is written for three
+# different things" is not this README promising a family of three.
 _CLAIMS = (
     re.compile(r"\b({})\s+(?:agent\s+)?tools\b".format("|".join(_WORDS)), re.I),
-    re.compile(r"\ball\s+({})\b".format("|".join(_WORDS)), re.I),
+    re.compile(r"\ball\s+({})\s*(?:[,:.]|$)".format("|".join(_WORDS)),
+               re.I | re.M),
 )
 
 
@@ -50,6 +53,22 @@ class TestTheFamilyCountIsRight(unittest.TestCase):
                   for m in pattern.findall(self.text)}
         self.assertTrue(stated, "the README no longer says how many there are")
         self.assertEqual(stated, {expected})
+
+    def test_the_claim_patterns_still_catch_the_bug_they_were_written_for(self):
+        # The patterns were narrowed once, after "a user record is written for
+        # three different things" was read as a claim about the family.  Prose
+        # about something else must not trip them, and the wrong-count
+        # sentences must still be caught.
+        caught = lambda s: {m.lower() for p in _CLAIMS for m in p.findall(s)}
+        for wrong in ("Install all four agent tools, including this one.",
+                      "Four tools for working with coding agents.",
+                      "Install all four:  pip install 'stillworks[all]'",
+                      "all four, and `stillworks tools` says so"):
+            self.assertEqual(caught(wrong), {"four"}, wrong)
+        for innocent in ("a user record is written for three different things",
+                         "counting all three reported 38318 turns",
+                         "all five of the records were skipped silently"):
+            self.assertEqual(caught(innocent), set(), innocent)
 
 
 if __name__ == "__main__":
