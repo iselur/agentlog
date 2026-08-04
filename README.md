@@ -126,7 +126,7 @@ For each session it derives:
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
-| tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
+| tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final `total_token_usage` snapshot, falling back to summing the per-turn `last_token_usage` blocks in a log too old to carry it |
 
 **A turn is a time you said something.** Claude Code writes a `type: "user"`
 record for three different things, and only one of them is a person: a tool

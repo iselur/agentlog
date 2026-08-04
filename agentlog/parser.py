@@ -482,6 +482,10 @@ def parse_codex_session(path: str) -> Optional[Dict]:
 
     tok_in = 0
     tok_out = 0
+    # The per-turn fallback, used only for a log with no total_token_usage.
+    turn_in = 0
+    turn_out = 0
+    saw_total = False
     commands: List[str] = []
     files_written: List[str] = []
     # call_id -> command, so a non-zero exit names the command that failed
@@ -574,18 +578,30 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                     s["failed_cmds"].append(label)
                     s["events"].append((ts, "error", label))
             elif pt == "token_count":
-                # last_token_usage is the session's *cumulative* total at this
-                # point in the conversation — each snapshot is higher than the
-                # previous.  Take the maximum seen so that the final (highest)
-                # value is used, rather than summing all snapshots.
+                # Two usage blocks sit side by side in this record and only
+                # one of them is the session.  `last_token_usage` is the turn
+                # that just finished; `total_token_usage` is everything so
+                # far.  Reading the first as if it were the second reported a
+                # session's most expensive single turn as its whole total —
+                # 10.8x low on input across the Codex sessions on this
+                # machine, and 97x on the worst of them.  It hid well: the
+                # number it printed was the size of a plausible turn.
+                #
+                # The total is monotonic, so the high-water mark is the final
+                # snapshot.  Where the field is missing — a log older than it
+                # — the per-turn numbers add up to exactly the same thing,
+                # which is what the fallback below does.
+                # tests/test_codex_tokens.py
                 info = _obj(payload.get("info"))
-                last = _obj(info.get("last_token_usage"))
-                ti = _count(last.get("input_tokens"))
-                to = _count(last.get("output_tokens"))
-                if ti > tok_in:
-                    tok_in = ti
-                if to > tok_out:
-                    tok_out = to
+                total = info.get("total_token_usage")
+                if isinstance(total, dict):
+                    saw_total = True
+                    tok_in = max(tok_in, _count(total.get("input_tokens")))
+                    tok_out = max(tok_out, _count(total.get("output_tokens")))
+                else:
+                    last = _obj(info.get("last_token_usage"))
+                    turn_in += _count(last.get("input_tokens"))
+                    turn_out += _count(last.get("output_tokens"))
 
         elif record_type == "response_item":
             pt = _text(payload.get("type"))
@@ -695,6 +711,8 @@ def parse_codex_session(path: str) -> Optional[Dict]:
         s["duration_s"] = (s["end"] - s["start"]).total_seconds()
     s["commands"] = _dedup(commands)
     s["files_written"] = _dedup(files_written)
+    if not saw_total:
+        tok_in, tok_out = turn_in, turn_out
     if tok_in > 0:
         s["tokens_in"] = tok_in
     if tok_out > 0:

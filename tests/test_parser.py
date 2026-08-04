@@ -478,7 +478,21 @@ class TestCacheTokens(unittest.TestCase):
 
 
 class TestCodexTokenInflation(unittest.TestCase):
-    """Regression tests for HIGH #1: Codex cumulative token snapshot inflation."""
+    """Codex per-turn token records add up to the session.
+
+    This class used to assert the opposite, on the belief that
+    `last_token_usage` was a cumulative snapshot and summing it would inflate
+    the total.  The belief was wrong.  `last_token_usage` is the turn that
+    just finished; the cumulative figure is `total_token_usage`, in the same
+    record, which the parser had never read.  Checked against the 1134 Codex
+    sessions on this machine, `total_token_usage` is exactly the running sum
+    of `last_token_usage`, so summing the per-turn numbers reconstructs the
+    total rather than inflating it — and the guard below was costing 10.8x on
+    input.  See tests/test_codex_tokens.py for the measurement.
+
+    The fixture here emits no `total_token_usage`, so these cases exercise the
+    fallback used for a log too old to carry the field.
+    """
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -494,13 +508,11 @@ class TestCodexTokenInflation(unittest.TestCase):
         _write_jsonl(path, records)
         return path
 
-    def test_multiturn_uses_final_snapshot_not_sum(self):
-        """Multiple token_count records are cumulative; only the last value must be used."""
+    def test_multiturn_adds_the_turns_up(self):
+        """Each token_count is one turn; the session is their sum."""
         sid = "019fd000-0000-7000-0000-000000000001"
-        # Simulate 3 turns where each snapshot is cumulative:
-        # turn 1: 13000, turn 2: 15000, turn 3: 25000
-        # A broken implementation sums: 13000+15000+25000 = 53000
-        # The correct answer is 25000 (the final snapshot)
+        # Three turns of 13000, 15000 and 25000 input.  The session spent
+        # 53000.  Reporting 25000 — the largest single turn — was the bug.
         records = [
             codex_session_meta(sid, "/tmp/proj", "2026-08-02T10:00:00Z"),
             codex_user_message("2026-08-02T10:00:01Z"),
@@ -512,11 +524,10 @@ class TestCodexTokenInflation(unittest.TestCase):
         ]
         path = self._session_file(records)
         sess = parse_codex_session(path)
-        # Must equal the final snapshot, NOT the sum of all snapshots
-        self.assertEqual(sess["tokens_in"], 25000)
-        self.assertEqual(sess["tokens_out"], 200)
-        # Confirm it is NOT the inflated sum
-        self.assertNotEqual(sess["tokens_in"], 53000)
+        self.assertEqual(sess["tokens_in"], 53000)
+        self.assertEqual(sess["tokens_out"], 450)
+        # And not the largest turn, which is what it used to say.
+        self.assertNotEqual(sess["tokens_in"], 25000)
 
 
 class TestPatchedFiles(unittest.TestCase):
