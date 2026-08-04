@@ -57,11 +57,25 @@ from .html import render_html
 # Date / time helpers
 # ---------------------------------------------------------------------------
 
-_LOCAL = datetime.now().astimezone().tzinfo
+def _local_midnight(d: date) -> datetime:
+    """Midnight at the start of `d`, in local time *on that date*.
+
+    Not "midnight, plus whatever the offset happens to be today".  This used to
+    capture `datetime.now().astimezone().tzinfo` once at import — a single fixed
+    offset — and stamp it onto every date.  In a zone that observes daylight
+    saving, asking in July about a day in January then opened the window an hour
+    early and closed it an hour early: a session from 23:00 the night before was
+    reported as belonging to the day you asked about, and the last hour of that
+    day was missing.  Neither looks like an error.  It looks like the log.
+
+    A naive datetime handed to `.astimezone()` is resolved against the
+    platform's rules *for that date*, which is the question we actually mean.
+    """
+    return datetime(d.year, d.month, d.day).astimezone()
 
 
 def _today_local() -> date:
-    return datetime.now(_LOCAL).date()
+    return datetime.now().astimezone().date()
 
 
 def _parse_since(value: str) -> Optional[datetime]:
@@ -96,7 +110,7 @@ def _parse_since(value: str) -> Optional[datetime]:
     # ISO date
     try:
         d = date.fromisoformat(value)
-        return datetime(d.year, d.month, d.day, tzinfo=_LOCAL)
+        return _local_midnight(d)
     except ValueError:
         return None
 
@@ -112,7 +126,7 @@ def _since_for_period(period: str) -> Optional[datetime]:
         d = today - timedelta(days=6)
     else:
         return None
-    return datetime(d.year, d.month, d.day, tzinfo=_LOCAL)
+    return _local_midnight(d)
 
 
 def _until_for_period(period: str) -> Optional[datetime]:
@@ -130,7 +144,7 @@ def _until_for_period(period: str) -> Optional[datetime]:
         end = today + timedelta(days=1)
     else:
         return None
-    return datetime(end.year, end.month, end.day, tzinfo=_LOCAL)
+    return _local_midnight(end)
 
 
 # ---------------------------------------------------------------------------

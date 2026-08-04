@@ -31,7 +31,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agentlog.cli import (  # noqa: E402
-    _LOCAL,
+    _local_midnight,
     _filter_sessions,
     _today_local,
     _until_for_period,
@@ -101,16 +101,12 @@ class TestTheWindowsThatDoHaveAnEnd(unittest.TestCase):
         until = _until_for_period("today")
         self.assertIsNotNone(until, "`today` has an end: tonight")
         tomorrow = _today_local() + timedelta(days=1)
-        self.assertEqual(
-            until,
-            datetime(tomorrow.year, tomorrow.month, tomorrow.day,
-                     tzinfo=_LOCAL))
+        self.assertEqual(until, _local_midnight(tomorrow))
 
     def test_yesterday_still_ends_this_morning(self):
         today = _today_local()
-        self.assertEqual(
-            _until_for_period("yesterday"),
-            datetime(today.year, today.month, today.day, tzinfo=_LOCAL))
+        self.assertEqual(_until_for_period("yesterday"),
+                         _local_midnight(today))
 
     def test_since_has_no_end(self):
         self.assertIsNone(_until_for_period("since"))
@@ -202,7 +198,8 @@ class TestEndToEnd(unittest.TestCase):
     def test_today_counts_it_too(self):
         # Skipped in the last minutes of the day, where a two-minute skew
         # genuinely lands on tomorrow and clipping it is correct.
-        if datetime.now(_LOCAL).hour == 23 and datetime.now(_LOCAL).minute > 50:
+        _now = datetime.now().astimezone()
+        if _now.hour == 23 and _now.minute > 50:
             self.skipTest("within ten minutes of midnight")
         self._write(self._skewed_log())
         code, out, err = self._run(["--home", self.tmp, "today"])
