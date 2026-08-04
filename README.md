@@ -63,6 +63,8 @@ agentlog today --html today.html
 agentlog                        same as: agentlog today
 agentlog today | yesterday | week
 agentlog since DATE             ISO date (2026-07-15) or offset (3d, 12h, 2w)
+agentlog on DAY                 one whole day: 2026-07-31, or 3d for three
+                                days ago
 agentlog show SESSION_ID        one session in full detail
 agentlog list                   50 most-recent sessions as a compact table
 agentlog list --all             all sessions (no row limit)
@@ -89,7 +91,7 @@ Output flags:
 
 ```
 --html FILE       write a self-contained HTML digest to FILE
-                  (time commands only: today, yesterday, week, since)
+                  (time commands only: today, yesterday, week, since, on)
 --md [FILE]       Markdown to FILE, or stdout if FILE is omitted
                   (time commands only)
 --json            JSON to stdout; works with all commands including list and show
@@ -354,6 +356,15 @@ reason a session with no timestamps does.
 the next one, so anything stamped exactly on the stroke belongs to the day it
 opens and is reported by `today`, not by `yesterday`.  Run the two commands back
 to back and each thing that happened is counted once between them.
+
+`on DAY` names any one of those days: `agentlog on 2026-07-31`, or `on 3d` for
+three days ago.  `since` cannot answer this — `since 2026-07-31` means "from
+Friday until now", never "Friday" — so before this the only two days you could
+ask about were today and yesterday.  The two commands take the same argument
+with one deliberate difference: `since 0d` is a window from now until now and is
+refused as a typo, while `on 0d` is today.  A length is refused rather than
+rounded (`12h` and `2w` name a duration, not a day) and says which command wants
+one.
 
 **Two clocks are involved, and the log's wins.**  The timestamps come from
 whichever machine wrote the log, which may be ahead of the one reading it — an

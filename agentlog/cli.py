@@ -5,6 +5,7 @@ Commands
   agentlog                       # same as: agentlog today
   agentlog today | yesterday | week
   agentlog since DATE            # ISO date, or offset like 3d / 12h
+  agentlog on DAY                # one whole day: 2026-07-31, or 3d
   agentlog show SESSION_ID       # one session in full detail
   agentlog list                  # recent sessions, compact table (default 50)
   agentlog list --all            # all sessions
@@ -38,7 +39,7 @@ import codecs
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from . import __version__
 from .parser import active_spans, find_sessions
@@ -113,6 +114,47 @@ def _parse_since(value: str) -> Optional[datetime]:
         d = date.fromisoformat(value)
         return _local_midnight(d)
     except ValueError:
+        return None
+
+
+def _parse_day(value: str) -> Optional[Tuple[datetime, datetime]]:
+    """Parse an 'on DAY' argument into one whole local day.
+
+    ``since`` answers "from then until now", which cannot express the commonest
+    question a digest is for: *what did I do on Tuesday*.  Before this, the only
+    two days that could be named were ``today`` and ``yesterday``.
+
+    The argument is the one ``since`` takes, minus the forms that do not name a
+    day.  ``12h`` and ``2w`` are durations, not dates — they would have to be
+    rounded to a day and the rounding would be a guess, so they are refused.
+    ``0d`` is the one place the two commands part company on purpose: ``since
+    0d`` is a window from now until now and is refused as an obvious typo, while
+    ``on 0d`` is today and is perfectly sensible.  See tests/test_a_named_day.py.
+    """
+    value = (value or "").strip().lower()
+
+    if value.endswith("d"):
+        try:
+            n = int(value[:-1])
+        except ValueError:
+            return None
+        if n < 0:
+            return None
+        try:
+            day = _today_local() - timedelta(days=n)
+        except (OverflowError, OSError):
+            return None
+    else:
+        try:
+            day = date.fromisoformat(value)
+        except ValueError:
+            return None
+
+    # The day after is worked out as a *date* and then turned into a moment, so
+    # that a day the clocks change is still a day and not twenty-three hours.
+    try:
+        return _local_midnight(day), _local_midnight(day + timedelta(days=1))
+    except (OverflowError, OSError, ValueError):
         return None
 
 
@@ -362,7 +404,7 @@ def _filter_project(sessions: List[Dict], needle: str) -> List[Dict]:
 
 # Commands that take a second word.  Everything else takes none, and a stray
 # word after them is a typo the person deserves to be told about.
-_COMMANDS_WITH_ARG = ("since", "show")
+_COMMANDS_WITH_ARG = ("since", "on", "show")
 
 
 def _log_dirs(home_dir: Optional[str]) -> List[str]:
@@ -409,6 +451,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "  agentlog\n"
             "  agentlog yesterday\n"
             "  agentlog since 3d\n"
+            "  agentlog on 2026-07-31\n"
             "  agentlog show 0224e6b8\n"
             "  agentlog list\n"
             "  agentlog today --html digest.html\n"
@@ -421,14 +464,16 @@ def _build_parser() -> argparse.ArgumentParser:
         nargs="?",
         default="today",
         metavar="COMMAND",
-        help="today | yesterday | week | since DATE | show ID | list (default: today)",
+        help="today | yesterday | week | since DATE | on DAY | show ID | list "
+             "(default: today)",
     )
     p.add_argument(
         "arg",
         nargs="?",
         default=None,
         metavar="ARG",
-        help="argument for 'since' (e.g. 3d, 12h, 2026-07-15) or 'show' (session ID prefix)",
+        help="argument for 'since' (3d, 12h, 2026-07-15), 'on' (2026-07-15, 3d) "
+             "or 'show' (session ID prefix)",
     )
     p.add_argument("--html", metavar="FILE", help="write self-contained HTML to FILE")
     p.add_argument(
@@ -564,7 +609,7 @@ def _run(argv=None) -> int:
     if args.arg is not None and args.command not in _COMMANDS_WITH_ARG:
         print(
             "agentlog: '{}' accepts no extra argument (got '{}')\n"
-            "  try: agentlog {} | agentlog since {} | agentlog show ID".format(
+            "  try: agentlog {} | agentlog on {} | agentlog show ID".format(
                 args.command, args.arg, args.command, args.arg),
             file=sys.stderr,
         )
@@ -668,6 +713,25 @@ def _run(argv=None) -> int:
         until_dt = None
         period_label = f"since {args.arg}"
 
+    elif args.command == "on":
+        if not args.arg:
+            print("agentlog: 'on' requires a date or a day offset "
+                  "(e.g. on 2026-07-31, on 3d)", file=sys.stderr)
+            return 2
+        window = _parse_day(args.arg)
+        if window is None:
+            msg = (f"agentlog: '{args.arg}' does not name a day — "
+                   "use an ISO date (2026-07-31) or a number of days ago (3d)")
+            # `12h` is not a mistake, it is the wrong command for it.  Say which
+            # one is right, and say it only to the person who typed a length.
+            if _parse_since(args.arg) is not None and args.arg.strip()[-1:].lower() in "hw":
+                msg += ("\n  that is a length, not a day: "
+                        f"try 'agentlog since {args.arg}'")
+            print(msg, file=sys.stderr)
+            return 2
+        since_dt, until_dt = window
+        period_label = f"on {since_dt.date().isoformat()}"
+
     elif args.command in ("today", "yesterday", "week"):
         since_dt = _since_for_period(args.command)
         until_dt = _until_for_period(args.command)
@@ -676,7 +740,8 @@ def _run(argv=None) -> int:
     else:
         print(
             f"agentlog: unknown command '{args.command}'\n"
-            "  try: agentlog today | yesterday | week | since DATE | show ID | list",
+            "  try: agentlog today | yesterday | week | since DATE | on DAY\n"
+            "       agentlog show ID | agentlog list",
             file=sys.stderr,
         )
         return 2
