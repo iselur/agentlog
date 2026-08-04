@@ -124,7 +124,7 @@ For each session it derives:
 | files read | `Read` tool-use calls (`input.file_path`) |
 | files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
-| errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code |
+| errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final cumulative `last_token_usage` snapshot |
 
@@ -142,6 +142,13 @@ left 74% of Codex sessions looking like the agent had done nothing; for the
 current month it was 98%.  Nothing failed — the sessions were listed, with no
 commands and no files under them, which is exactly what a session of pure
 conversation looks like.
+
+MCP tool calls are reported in their own record, and only a failed one is shown.
+A successful MCP call is not turned into a command — it is not a shell command,
+and the command list means one thing — so a session that spent its time in MCP
+tools will look quiet.  Its failures will not: before v0.2.3 they were in a
+record nothing read, and four sessions on the logs this was found with reported
+`0 errors` while an MCP server they had asked for was not running.
 
 The read/written split is specific to Claude Code.  Codex has no structured
 file-write field — it edits by handing a patch envelope to a patch tool — so

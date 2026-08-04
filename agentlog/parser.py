@@ -531,6 +531,28 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                     s["errors"] += 1
                     s["failed_cmds"].append(label)
                     s["events"].append((ts, "error", label))
+            elif pt == "mcp_tool_call_end":
+                # An MCP call reports itself here and nowhere else, and its
+                # result is either {"Ok": ...} or {"Err": "..."}.  A failed one
+                # is a failure exactly like a command that exited non-zero, and
+                # a session whose only failures were these used to read
+                # `0 errors` — a claim, not a partial count.
+                #
+                # A successful call is deliberately not turned into a command:
+                # an MCP call is not a shell command, and `commands` means one
+                # thing.  Only the failure is news.
+                result = payload.get("result")
+                if isinstance(result, dict) and "Err" in result:
+                    inv = _obj(payload.get("invocation"))
+                    server = _text(inv.get("server"))
+                    tool = _text(inv.get("tool"))
+                    # The tool name alone does not say which server was down,
+                    # so both are shown where both are known.
+                    what = "/".join(p for p in (server, tool) if p)
+                    label = "mcp " + what if what else "mcp call failed"
+                    s["errors"] += 1
+                    s["failed_cmds"].append(label)
+                    s["events"].append((ts, "error", label))
             elif pt == "token_count":
                 # last_token_usage is the session's *cumulative* total at this
                 # point in the conversation — each snapshot is higher than the
