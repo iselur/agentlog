@@ -122,7 +122,7 @@ For each session it derives:
 | models | `message.model` in `assistant` records |
 | user turns | `type == "user"` records that are a person typing — not tool results, not subagent prompts (see below) |
 | files read | `Read` tool-use calls (`input.file_path`) |
-| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
+| files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`) and `NotebookEdit` (`input.notebook_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |

@@ -16,8 +16,9 @@ duration_s    float | None    — (end - start).total_seconds(), or None
 models        list[str]       — unique model names observed
 user_turns    int             — number of user-turn records
 files_read    list[str]       — file paths from Read tool calls
-files_written list[str]       — file paths from Write/Edit/MultiEdit calls,
-                                and from Codex patch_apply_end records
+files_written list[str]       — file paths from Write/Edit/MultiEdit and
+                                NotebookEdit calls, and from Codex
+                                patch_apply_end records
 commands      list[str]       — shell commands from Bash, from Codex
                                 custom_tool_call script snippets, and from
                                 older exec_command / apply_patch calls
@@ -186,7 +187,14 @@ def _read_lines(path: str) -> tuple[List[str], int]:
 # Claude Code parser
 # ---------------------------------------------------------------------------
 
-_CLAUDE_WRITE_TOOLS = {"Write", "Edit", "MultiEdit"}
+# The tools that write a file, each with the field it puts the path under.
+# `NotebookEdit` is the reason this is a mapping and not a set: it does not use
+# `file_path` like the other three, so knowing its name is not enough to find
+# what it wrote.  A day spent in a notebook read `0 files written`.
+# tests/test_notebook_writes.py.
+_CLAUDE_WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path",
+                       "MultiEdit": "file_path",
+                       "NotebookEdit": "notebook_path"}
 
 
 def _claude_tool_items(assistant_obj: Dict):
@@ -307,7 +315,7 @@ def parse_claude_session(path: str) -> Optional[Dict]:
                     continue
                 if tool_id:
                     seen_tool_ids.add(tool_id)
-                fp = _text(inp.get("file_path"))
+                fp = _text(inp.get(_CLAUDE_WRITE_TOOLS.get(name, "file_path")))
                 if name == "Read" and fp:
                     files_read.append(fp)
                     s["events"].append((ts, "read", fp))
