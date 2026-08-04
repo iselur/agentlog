@@ -262,6 +262,27 @@ def _clip_tokens(s: Dict, start: datetime, end: datetime,
     s["tokens_out"] = tok_out
 
 
+def _clip_recaps(s: Dict, start: datetime, end: datetime,
+                 end_open: bool = False) -> None:
+    """Keep the recaps written inside the window.
+
+    Against the window that was *asked for*, like tokens and for the same
+    reason: a recap is written when a turn ends, which on a busy day is after
+    the last tool call, and the tightened window ends at the last tool call.
+    Clipping against that one loses the recap that says how the day finished.
+
+    A recap with no timestamp is kept.  It cannot be placed, and unlike a
+    token or a command it can never be double-counted into a total — losing
+    the one sentence that explains a session is the worse of the two mistakes.
+    See tests/test_the_recap.py.
+    """
+    recaps = s.get("recaps")
+    if not recaps:
+        return
+    s["recaps"] = [(ts, text) for ts, text in recaps
+                   if ts is None or _inside(ts, start, end, end_open)]
+
+
 def _clip_counts(s: Dict, start: datetime, end: datetime,
                  end_open: bool = False) -> None:
     """Recount files, commands, turns and errors from events inside the window.
@@ -381,6 +402,7 @@ def _filter_sessions(
         s["active_spans"] = spans
         if clip:
             _clip_tokens(s, *asked)
+            _clip_recaps(s, *asked)
             s["window_s"] = sum((b - a).total_seconds() for a, b in spans)
             _clip_counts(s, clipped_start, clipped_end, end_open)
         out.append(s)

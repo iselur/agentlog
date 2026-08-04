@@ -473,8 +473,14 @@ class TestThereIsNoNetworkCode(unittest.TestCase):
             text = fh.read()
         for claim in ("No network code",
                       "Nothing is uploaded or sent",
-                      "Message text is never extracted or displayed"):
+                      "Conversation text is never extracted or displayed"):
             self.assertIn(claim, text)
+        # The promise used to be about "message text", and it was made narrower
+        # on purpose when `away_summary` recaps started being shown.  A README
+        # that still made the old, wider promise would be making a false one,
+        # and these tests would be guarding a sentence nobody keeps.
+        self.assertNotIn("Message text is never extracted or displayed", text)
+        self.assertIn("away_summary", text)
 
 
 if __name__ == "__main__":

@@ -179,6 +179,15 @@ body {
   color: var(--muted);
   margin-bottom: 0.3rem;
 }
+/* The recap is prose, not a path — set as prose, and left of a rule so it
+   reads as the card's own summary rather than as one more list. */
+.recap {
+  margin-top: 0.75rem;
+  padding-left: 0.7rem;
+  border-left: 2px solid var(--code-bg);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
 .code-block {
   font-family: ui-monospace, "Cascadia Code", "Source Code Pro", monospace;
   font-size: 0.78rem;
@@ -286,6 +295,12 @@ def _render_card(s: Dict, shorts: Optional[Dict[str, str]] = None) -> str:
     # Sections
     sections = ""
 
+    # First, above the paths: the one part of a card that says what the
+    # session was *for*.  `_e` escapes it like everything else here — the text
+    # was written by the thing being reported on.
+    for _at, text in s.get("recaps") or []:
+        sections += _tag("div", _e(str(text)), class_="recap")
+
     files_all = _dedup_merge(s["files_read"], s["files_written"])
     if files_all:
         limit = 12
@@ -379,7 +394,8 @@ def render_html(
     )
 
     privacy_note = (
-        "<p>This digest may contain file paths and shell commands. "
+        "<p>This digest may contain file paths, shell commands, and the "
+        "recaps the agent wrote of what it was asked to do. "
         "Review before sharing.</p>"
     )
     footer = _tag(

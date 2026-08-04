@@ -648,6 +648,18 @@ def render_show(s: Dict) -> str:
     if tokens:
         lines.append(f"tokens   {tokens.replace('tokens — ', '')}")
 
+    # Before the paths, because it is the only part of this view that answers
+    # "what was this for?" and a reader who has to scroll past forty file
+    # paths to reach it will not.  `_one_row` for the same reason as the
+    # commands below: the text was written by the thing being audited, and a
+    # recap containing a newline and a plausible heading would otherwise print
+    # as extra rows in the exact shape of real ones.
+    if s.get("recaps"):
+        lines.append("")
+        lines.append(f"recap ({len(s['recaps'])}):")
+        for _at, text in s["recaps"]:
+            lines.append(f"  {_one_row(str(text))}")
+
     if s["files_read"]:
         lines.append("")
         lines.append(f"files read ({len(s['files_read'])}):")
@@ -722,6 +734,13 @@ def _markdown_session(s: Dict, shorts: Dict[str, str]) -> List[str]:
         lines.append(f"- **tokens**: {tokens.replace('tokens — ', '')}")
     lines.append("")
 
+    # Flattened onto one line each, as in `show`: a blockquote ends at the
+    # first line that is not one, and a stray ``` would take the rest of the
+    # document into a code block with it.
+    for _at, text in s.get("recaps") or []:
+        lines.append(f"> {_one_row(str(text))}")
+        lines.append("")
+
     files_all = _dedup_merge(s["files_read"], s["files_written"])
     if files_all:
         lines.append(f"**Files** ({len(files_all)}):")
@@ -761,6 +780,12 @@ def _session_for_json(s: Dict) -> Dict:
     # exactly the mistake the text output stopped making.  Say the working time
     # too, under its own name, so a script does not have to add up the spans.
     out["active_s"] = _window_duration(s)
+    # A named pair rather than a bare tuple: a script reading the one field
+    # here that is meant for a person should not have to know which end of a
+    # list the sentence is on.
+    if s.get("recaps"):
+        out["recaps"] = [{"at": at.isoformat() if at else None, "text": text}
+                         for at, text in s["recaps"]]
     return out
 
 

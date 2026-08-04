@@ -219,6 +219,7 @@ def _empty_session(session_id: str, source: str) -> Dict:
         "tokens_in": None,
         "tokens_out": None,
         "ai_title": None,
+        "recaps": [],
         "version": None,
         "skipped_lines": 0,
     }
@@ -256,6 +257,20 @@ def _read_lines(path: str) -> tuple[List[str], int]:
 _CLAUDE_WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path",
                        "MultiEdit": "file_path",
                        "NotebookEdit": "notebook_path"}
+
+
+# The recap ends with a note about the settings screen — the same words on all
+# 327 of them here.  It is addressed to whoever was watching at the time, not
+# to somebody reading the log back a week later, and repeating it under every
+# session is how a useful line turns into wallpaper.  Matched by what it points
+# at rather than by its exact wording, and only at the very end, so a recap
+# that happens to discuss `/config` in passing keeps its sentence.
+_RECAP_TRAILER = re.compile(r"\s*\([^()]*/config[^()]*\)\s*$")
+
+
+def _strip_recap_trailer(text: str) -> str:
+    """A recap, with the note to the watcher taken off the end."""
+    return _RECAP_TRAILER.sub("", text or "").strip()
 
 
 def _claude_tool_items(assistant_obj: Dict):
@@ -456,6 +471,11 @@ def parse_claude_session(
 
         elif record_type == "ai-title":
             s["ai_title"] = _text(obj.get("aiTitle")) or None
+
+        elif record_type == "system" and obj.get("subtype") == "away_summary":
+            text = _strip_recap_trailer(_text(obj.get("content")))
+            if text:
+                s["recaps"].append((ts, text))
 
     # Require at least one user turn or timestamp to be a real session
     if s["user_turns"] == 0 and s["start"] is None:

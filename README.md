@@ -128,6 +128,7 @@ For each session it derives:
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
 | the failing command | the tool-use call the failed result points back at (`tool_use_id` / `call_id`) |
+| recap | `system` records with subtype `away_summary` — the short plain-English note a background session writes at the end of a turn, minus its trailing pointer at the settings screen |
 | tokens | `message.usage.input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` in `assistant` records; Codex uses the final `total_token_usage` snapshot, falling back to summing the per-turn `last_token_usage` blocks in a log too old to carry it |
 
 **A turn is a time you said something.** Claude Code writes a `type: "user"`
@@ -403,9 +404,11 @@ marker saying how much was dropped; `--json` always has the whole thing.
 **Tokens are not verified.**  Token counts come from usage fields in the logs.
 They may differ from what your billing provider records.
 
-**Message text is never shown.**  agentlog extracts metadata only: file paths,
-shell commands, durations, model names, and token counts.  Conversation content
-is not extracted or displayed regardless of any flag.
+**Conversation text is never shown.**  agentlog extracts metadata: file paths,
+shell commands, durations, model names, and token counts.  What you typed and
+what the agent replied is not extracted or displayed regardless of any flag.
+The one piece of prose it does show is the agent's own recap of a background
+turn (`away_summary`), which is described under Privacy below.
 
 **No test coverage against the developer's real logs.**  The test suite uses
 synthetic fixtures.  It cannot guarantee correct parsing of every schema variant
@@ -451,10 +454,22 @@ missing from the report.
 
 agentlog is strictly local.  No network code.  Nothing is uploaded or sent.
 
-It shows metadata only: file paths, shell commands, durations, and model names.
-Message text is never extracted or displayed.
+It shows metadata: file paths, shell commands, durations, and model names.
+Conversation text is never extracted or displayed — not what you typed, not
+what the agent replied.
 
-The HTML digest may contain file paths and shell commands from your sessions.
+There is one exception, and it is the reason this paragraph is longer than it
+used to be.  A background session ends each turn by writing itself a short
+recap — *"You asked what's in the ledger: it tracks 104 requests, all done
+except R102"* — as a `system` record with subtype `away_summary`.  agentlog
+shows those.  They are not conversation text: nothing you typed and nothing the
+agent said is quoted, and Claude Code had already put the same sentence on your
+screen.  But they are *about* the conversation, and a recap describes what a
+session was for far better than a list of paths can.  If that is a line you
+would not want in something you share, it is in `agentlog show`, `--md`,
+`--json` and the HTML digest, and the note at the foot of the HTML says so.
+
+The HTML digest may contain file paths, shell commands, and those recaps.
 Review it before sharing it with others.
 
 That promise has to hold for the parts of a session file that are not the
