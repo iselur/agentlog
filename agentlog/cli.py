@@ -186,6 +186,40 @@ def _first_and_last_inside(s: Dict, start: datetime, end: datetime,
     return min(inside), max(inside)
 
 
+def _clip_tokens(s: Dict, start: datetime, end: datetime,
+                 end_open: bool = False) -> None:
+    """Recount tokens from the turns that spent them inside the window.
+
+    A week-long session was reporting its whole week's spend into every day it
+    touched, on the line directly below a correctly clipped command count — on
+    the real logs, 88.3M against the 14.2M actually spent that day.
+
+    A session that spent nothing here spent nothing, and says zero: an empty
+    window is an answer.  Only a session with no per-turn record at all keeps
+    its lifetime total, because that is one we cannot see inside — the same
+    distinction ``active_spans`` has to make.
+
+    The window here is the one that was *asked for*, not the one tightened onto
+    the session's first and last event.  Tightening exists so that a session
+    left open overnight is not billed for the night, and it reckons on events —
+    tool calls, turns, errors.  A reply that costs a thousand tokens and calls
+    no tool is not an event, so anything spent after the day's last tool call
+    sat outside the tightened edge and vanished.  That came to 3.4M tokens a
+    week here, and showed as a week totalling more than its seven days did.
+    See tests/test_window_tokens.py.
+    """
+    spent = s.get("token_events")
+    if not spent:
+        return
+    tok_in = tok_out = 0
+    for ts, a, b in spent:
+        if _inside(ts, start, end, end_open):
+            tok_in += a
+            tok_out += b
+    s["tokens_in"] = tok_in
+    s["tokens_out"] = tok_out
+
+
 def _clip_counts(s: Dict, start: datetime, end: datetime,
                  end_open: bool = False) -> None:
     """Recount files, commands, turns and errors from events inside the window.
@@ -193,6 +227,10 @@ def _clip_counts(s: Dict, start: datetime, end: datetime,
     A session that ran for two weeks would otherwise contribute all of its
     edits to every single day's digest.  Sessions parsed before events were
     recorded (or with untimestamped records) keep their lifetime totals.
+
+    Tokens are clipped separately, by ``_clip_tokens``, because they have to be
+    measured against the window that was asked for rather than the tightened one
+    this is given.
     """
     events = s.get("events") or []
     if not events:
@@ -273,6 +311,10 @@ def _filter_sessions(
         # a day boundary produces, and it is the one that was counted twice.
         end_open = until is not None and until <= end
         clip = clipped_start > start or clipped_end < end or end_open
+        # Before the tightening below moves the edges: what a period cost is
+        # measured against the period, not against the session's first and last
+        # tool call inside it.  See _clip_tokens.
+        asked = (clipped_start, clipped_end, end_open)
         if clip:
             # The window edge is where we started looking, not when anything
             # happened.  A session left open overnight began its day at local
@@ -296,6 +338,7 @@ def _filter_sessions(
         spans = active_spans(s, clipped_start, clipped_end, end_open)
         s["active_spans"] = spans
         if clip:
+            _clip_tokens(s, *asked)
             s["window_s"] = sum((b - a).total_seconds() for a, b in spans)
             _clip_counts(s, clipped_start, clipped_end, end_open)
         out.append(s)

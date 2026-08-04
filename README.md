@@ -338,6 +338,18 @@ inside, which is a different thing from one we can see slept.  Confusing the two
 made four separate days each report exactly `24h 00m`, and made a week come out
 shorter than the days inside it added up to.
 
+**Tokens are clipped the same way, against the period you asked for.**  A
+week-long session used to report its whole week's spend into every day it
+touched — on one real session, `88.3M` printed on the line directly below a
+correctly clipped `1 command`, against the `14.2M` actually spent that day.  A
+day now counts the turns that spent their tokens inside it, so seven days add up
+to their week exactly.  Note the window here is the one you asked for, not the
+one tightened onto the session's first and last tool call: a reply that costs a
+thousand tokens and calls no tool is still spending, and anything spent after the
+day's last tool call would otherwise vanish.  Sessions whose logs carry no
+per-turn record of what was spent still report their lifetime total, for the same
+reason a session with no timestamps does.
+
 **Consecutive days add up.**  A day starts at local midnight and ends *before*
 the next one, so anything stamped exactly on the stroke belongs to the day it
 opens and is reported by `today`, not by `yesterday`.  Run the two commands back

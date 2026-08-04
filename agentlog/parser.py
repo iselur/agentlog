@@ -204,6 +204,7 @@ def _empty_session(session_id: str, source: str) -> Dict:
         "project": "",
         "project_name": "",
         "events": [],
+        "token_events": [],
         "start": None,
         "end": None,
         "duration_s": None,
@@ -411,12 +412,18 @@ def parse_claude_session(
             if msg_id and msg_id not in seen_msg_ids:
                 seen_msg_ids.add(msg_id)
                 usage = _obj(msg.get("usage"))
-                tok_in += (
+                spent_in = (
                     _count(usage.get("input_tokens"))
                     + _count(usage.get("cache_creation_input_tokens"))
                     + _count(usage.get("cache_read_input_tokens"))
                 )
-                tok_out += _count(usage.get("output_tokens"))
+                spent_out = _count(usage.get("output_tokens"))
+                tok_in += spent_in
+                tok_out += spent_out
+                # And when it was spent, so a day can add up its own.  See
+                # tests/test_window_tokens.py.
+                if spent_in or spent_out:
+                    s["token_events"].append((ts, spent_in, spent_out))
 
             model = _text(msg.get("model"))
             if model and model not in s["models"]:
@@ -709,12 +716,24 @@ def parse_codex_session(path: str) -> Optional[Dict]:
                 total = info.get("total_token_usage")
                 if isinstance(total, dict):
                     saw_total = True
+                    # The total is a high-water mark, so what this turn cost is
+                    # how much it moved.  Recording the difference lets a day
+                    # add up its own share; the differences still sum to the
+                    # final total, which is what the session reports.
+                    was_in, was_out = tok_in, tok_out
                     tok_in = max(tok_in, _count(total.get("input_tokens")))
                     tok_out = max(tok_out, _count(total.get("output_tokens")))
+                    if tok_in > was_in or tok_out > was_out:
+                        s["token_events"].append(
+                            (ts, tok_in - was_in, tok_out - was_out))
                 else:
                     last = _obj(info.get("last_token_usage"))
-                    turn_in += _count(last.get("input_tokens"))
-                    turn_out += _count(last.get("output_tokens"))
+                    spent_in = _count(last.get("input_tokens"))
+                    spent_out = _count(last.get("output_tokens"))
+                    turn_in += spent_in
+                    turn_out += spent_out
+                    if spent_in or spent_out:
+                        s["token_events"].append((ts, spent_in, spent_out))
 
         elif record_type == "response_item":
             pt = _text(payload.get("type"))
@@ -897,6 +916,7 @@ def _merge_sessions(group: List[Dict]) -> Dict:
     ordered = sorted(group, key=lambda s: (s["start"] or _EPOCH, s["end"] or _EPOCH))
     merged = dict(ordered[0])
     merged["events"] = []
+    merged["token_events"] = []
     merged["models"] = []
     merged["files_read"] = []
     merged["files_written"] = []
@@ -909,6 +929,7 @@ def _merge_sessions(group: List[Dict]) -> Dict:
     tok_in = tok_out = None
     for s in ordered:
         merged["events"].extend(s["events"])
+        merged["token_events"].extend(s.get("token_events") or [])
         merged["models"].extend(s["models"])
         merged["files_read"].extend(s["files_read"])
         merged["files_written"].extend(s["files_written"])
@@ -931,6 +952,7 @@ def _merge_sessions(group: List[Dict]) -> Dict:
     # A record whose timestamp would not parse still has an event; it sorts to
     # the front rather than raising halfway through the merge.
     merged["events"].sort(key=lambda e: e[0] or _EPOCH)
+    merged["token_events"].sort(key=lambda e: e[0] or _EPOCH)
     merged["models"] = _dedup(merged["models"])
     merged["files_read"] = _dedup(merged["files_read"])
     merged["files_written"] = _dedup(merged["files_written"])
