@@ -523,12 +523,56 @@ def parse_codex_session(path: str) -> Optional[Dict]:
 # Discovery
 # ---------------------------------------------------------------------------
 
-def find_sessions(home_dir: Optional[str] = None) -> tuple[List[Dict], List[str]]:
+UNREADABLE = "could not be read"
+NO_RECORDS = "had no readable records"
+
+
+def _why_unusable(path: str, sess: Optional[Dict]) -> str:
+    """Why this file will not appear in any report, or '' if it will.
+
+    A session with no start time cannot fall inside any day window, so it is
+    dropped by the time filter before anything is rendered — silently, and
+    including the count of what it skipped.  This asks the file itself why,
+    so the report can say so instead.
+
+    Only ever asked about files that produced nothing, so the extra stat calls
+    fall on the handful that are already broken.
+
+    A zero-byte file is deliberately not one of these: a session that has just
+    started is empty on disk, nothing has been lost, and warning about it would
+    make the note fire on an ordinary morning.
+    """
+    if sess is not None and sess["start"] is not None:
+        return ""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return UNREADABLE
+    if not stat.S_ISREG(st.st_mode):
+        return UNREADABLE
+    if st.st_size == 0:
+        return ""
+    try:
+        with open(path, "rb") as fh:
+            fh.read(1)
+    except OSError:
+        return UNREADABLE
+    # It opened and it has bytes in it, so the bytes are the problem: truncated
+    # mid-write, a different format, or a file that only happens to end .jsonl.
+    return NO_RECORDS
+
+
+def find_sessions(
+    home_dir: Optional[str] = None,
+) -> tuple[List[Dict], List[str], List[tuple]]:
     """Find all sessions from Claude Code and Codex.
 
-    Returns ``(sessions, sources)`` where ``sources`` is a list of names of
-    agents whose logs were found.  ``sessions`` is sorted newest-first.
-    If neither log directory exists the list is empty.
+    Returns ``(sessions, sources, unusable)``.  ``sources`` is a list of names
+    of agents whose logs were found.  ``sessions`` is sorted newest-first.
+    ``unusable`` is a list of ``(path, reason)`` for log files that exist and
+    contributed nothing — the caller is expected to say so, because a report
+    computed from fewer files than are on disk looks exactly like a complete
+    one.  If neither log directory exists every list is empty.
     """
     if home_dir is None:
         home_dir = os.path.expanduser("~")
@@ -538,17 +582,23 @@ def find_sessions(home_dir: Optional[str] = None) -> tuple[List[Dict], List[str]
 
     sessions: List[Dict] = []
     sources: List[str] = []
+    unusable: List[tuple] = []
 
     # Track real (resolved) file paths to skip symlink duplicates.
     seen_real_paths: set = set()
 
     def _add(sess: Optional[Dict], path: str) -> None:
-        if sess is None:
-            return
+        # The duplicate check now happens before the None check, so a symlink
+        # to an unreadable file is reported once rather than once per link.
         real = os.path.realpath(path)
         if real in seen_real_paths:
             return
         seen_real_paths.add(real)
+        reason = _why_unusable(path, sess)
+        if reason:
+            unusable.append((path, reason))
+        if sess is None:
+            return
         sessions.append(sess)
 
     if os.path.isdir(claude_dir):
@@ -583,4 +633,5 @@ def find_sessions(home_dir: Optional[str] = None) -> tuple[List[Dict], List[str]
     # Sort newest-first; sessions without a start time go to the end
     _epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
     sessions.sort(key=lambda s: s["start"] or _epoch, reverse=True)
-    return sessions, sources
+    unusable.sort()
+    return sessions, sources, unusable

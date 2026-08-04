@@ -230,6 +230,22 @@ notice.  Fields that agentlog reads today may move or disappear.  Parsing is
 defensive and will not crash, but some sessions may show empty file or command
 lists if the format changes.
 
+**A log file it cannot read is named, not skipped.**  A file whose permissions
+changed, or one truncated mid-write into bytes that no longer parse, cannot
+contribute a session — and until v0.2.3 it contributed nothing to the report
+either, including any mention that it existed.  One good file beside two broken
+ones reported "1 session", in `today`, in `list` and in `--json` alike, which is
+the wrong answer in the direction that looks fine.  Every view now ends with
+
+    note: 2 log files were not counted — 1 could not be read, 1 had no readable records
+          (run with --verbose to see which)
+
+and `--verbose` names the paths.  Under `--json` and `--md -` the note goes to
+stderr, so stdout stays the bare array or the bare document.  The exit code
+stays 0: agentlog reports, it does not gate.  An empty file is deliberately not
+one of these — a session that has just started has nothing in it yet, and
+nothing has been lost.
+
 **Project identification is best-effort.**  The project is taken from the `cwd`
 field of the first `user` record in a session.  If a session starts before a
 `user` record is written, the project falls back to a guess derived from the

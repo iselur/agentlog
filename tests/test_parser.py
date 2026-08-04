@@ -331,7 +331,7 @@ class TestFindSessions(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_no_logs_returns_empty(self):
-        sessions, sources = find_sessions(self.tmp)
+        sessions, sources, _unusable = find_sessions(self.tmp)
         self.assertEqual(sessions, [])
         self.assertEqual(sources, [])
 
@@ -339,7 +339,7 @@ class TestFindSessions(unittest.TestCase):
         sid = "find-test-0000-0000-0000-000000000001"
         records = [claude_user(sid, "2026-07-16T10:00:00Z", cwd="/tmp/proj")]
         make_claude_project(self.tmp, "-home-test-proj", [records])
-        sessions, sources = find_sessions(self.tmp)
+        sessions, sources, _unusable = find_sessions(self.tmp)
         self.assertTrue(len(sessions) >= 1)
         self.assertIn("Claude Code", sources)
 
@@ -353,7 +353,7 @@ class TestFindSessions(unittest.TestCase):
             sid = f"session-{name[:4]}"
             records = [claude_user(sid, ts, cwd="/tmp")]
             _write_jsonl(os.path.join(proj_dir, name), records)
-        sessions, _ = find_sessions(self.tmp)
+        sessions, _, _unusable = find_sessions(self.tmp)
         valid = [s for s in sessions if s["start"] is not None]
         self.assertTrue(valid[0]["start"] > valid[-1]["start"])
 
@@ -367,7 +367,7 @@ class TestFindSessions(unittest.TestCase):
         _write_jsonl(real, records)
         link = os.path.join(proj_dir, "alias.jsonl")
         os.symlink(real, link)
-        sessions, _ = find_sessions(self.tmp)
+        sessions, _, _unusable = find_sessions(self.tmp)
         # Only one session, despite two files on disk
         self.assertEqual(len(sessions), 1)
 
@@ -394,7 +394,7 @@ class TestFindSessions(unittest.TestCase):
                 codex_user_message("2026-08-02T10:00:02Z"),
             ],
         )
-        sessions, _ = find_sessions(self.tmp)
+        sessions, _, _unusable = find_sessions(self.tmp)
         # Must be exactly one session
         self.assertEqual(len(sessions), 1)
         # Must be the richer one (2 turns)

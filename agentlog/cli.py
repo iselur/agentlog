@@ -49,6 +49,7 @@ from .render import (
     render_markdown,
     render_show,
     render_text,
+    render_unusable,
 )
 from .html import render_html
 
@@ -508,9 +509,12 @@ def _run(argv=None) -> int:
 
     # ---- 'list' command ----
     if args.command == "list":
-        sessions, sources = find_sessions(home_dir)
+        sessions, sources, unusable = find_sessions(home_dir)
         if not sessions:
             _no_sessions_msg(home_dir)
+            # "No agent session logs found" is wrong if there are log files and
+            # none of them could be used, which is the case this rescues.
+            _note_unusable(unusable, args.verbose)
             return 0
         if args.html or args.md is not None:
             print(
@@ -525,10 +529,12 @@ def _run(argv=None) -> int:
         truncated = sessions if limit is None else sessions[:limit]
         if args.json:
             print(render_json(truncated))
+            _note_unusable(unusable, args.verbose, to_stderr=True)
             return 0
         print(render_list(truncated))
         if limit is not None and len(sessions) > limit:
             print(f"... and {len(sessions) - limit} more  (use --all to see everything)")
+        _note_unusable(unusable, args.verbose)
         return 0
 
     # ---- 'show SESSION_ID' command ----
@@ -536,11 +542,14 @@ def _run(argv=None) -> int:
         if not args.arg:
             print("agentlog: 'show' requires a session ID", file=sys.stderr)
             return 2
-        sessions, sources = find_sessions(home_dir)
+        sessions, sources, unusable = find_sessions(home_dir)
         prefix = args.arg.lower()
         matches = [s for s in sessions if s["id"].lower().startswith(prefix)]
         if not matches:
             print(f"agentlog: no session found matching '{args.arg}'", file=sys.stderr)
+            # The session being asked for by name may be one of the files that
+            # could not be read, which makes this the most useful place to say.
+            _note_unusable(unusable, args.verbose, to_stderr=True)
             return 2
         if len(matches) > 1:
             print(
@@ -559,8 +568,10 @@ def _run(argv=None) -> int:
             return 2
         if args.json:
             print(render_json([matches[0]]))
+            _note_unusable(unusable, args.verbose, to_stderr=True)
             return 0
         print(render_show(matches[0]))
+        _note_unusable(unusable, args.verbose)
         return 0
 
     # ---- time-range commands ----
@@ -593,7 +604,7 @@ def _run(argv=None) -> int:
         return 2
 
     # Load and filter
-    sessions, sources = find_sessions(home_dir)
+    sessions, sources, unusable = find_sessions(home_dir)
     if not sessions and not sources:
         _no_sessions_msg(home_dir)
         return 0
@@ -609,6 +620,9 @@ def _run(argv=None) -> int:
             with open(args.html, "w", encoding="utf-8") as fh:
                 fh.write(html_str)
             print(f"wrote {args.html}")
+            # A report saved to a file outlives the terminal it was made in, so
+            # this is the last chance to say it was built from part of the logs.
+            _note_unusable(unusable, args.verbose)
         except OSError as exc:
             print(f"agentlog: could not write HTML: {exc}", file=sys.stderr)
             return 2
@@ -618,11 +632,15 @@ def _run(argv=None) -> int:
         md_str = render_markdown(filtered)
         if args.md == "-":
             print(md_str)
+            # `--md -` is piped into a file or a paste buffer often enough that
+            # the note has to stay out of stdout, same as --json.
+            _note_unusable(unusable, args.verbose, to_stderr=True)
         else:
             try:
                 with open(args.md, "w", encoding="utf-8") as fh:
                     fh.write(md_str)
                 print(f"wrote {args.md}")
+                _note_unusable(unusable, args.verbose)
             except OSError as exc:
                 print(f"agentlog: could not write Markdown: {exc}", file=sys.stderr)
                 return 2
@@ -630,6 +648,7 @@ def _run(argv=None) -> int:
     # ---- JSON output ----
     if args.json:
         print(render_json(filtered))
+        _note_unusable(unusable, args.verbose, to_stderr=True)
         return 0
 
     # ---- Default: plain text ----
@@ -647,8 +666,21 @@ def _run(argv=None) -> int:
             print(render_text(filtered, verbose=args.verbose))
         else:
             print(render_digest(filtered, period_label, verbose=args.verbose))
+        _note_unusable(unusable, args.verbose)
 
     return 0
+
+
+def _note_unusable(unusable, verbose: bool, to_stderr: bool = False) -> None:
+    """Say that some log files were not counted, if any were not.
+
+    Goes to stderr under --json, where stdout is a published contract (a bare
+    array of sessions) and a warning appended to it would break every reader.
+    """
+    note = render_unusable(unusable, verbose)
+    if note:
+        print("\n" + note if not to_stderr else note,
+              file=sys.stderr if to_stderr else sys.stdout)
 
 
 def _no_sessions_msg(home_dir: Optional[str]) -> None:
