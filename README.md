@@ -542,6 +542,11 @@ python3 -m venv .venv
 
 Requires Python 3.9 or later.  Zero runtime dependencies.
 
+`agentlog --version` prints the version.  Worth quoting in a bug report: this
+tool reads session files written by somebody else's program, those formats
+move, and "which agentlog" is the first question about a digest that came out
+wrong.
+
 ---
 
 ## Running the tests
