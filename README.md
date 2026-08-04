@@ -13,8 +13,7 @@ Everything is organised by project, because that is the first thing you want to 
 ## 30-second quickstart
 
 ```sh
-pip install 'stillworks[all]'   # all five agent tools, including this one
-pip install agentlog-tool       # or just this one (the command is `agentlog`)
+pip install stillworks   # one install, all five agent tools, including this one
 
 agentlog today
 
@@ -22,8 +21,9 @@ agentlog today
 cd /path/to/agentlog && python3 -m agentlog today
 ```
 
-(The PyPI name is `agentlog-tool` because `agent-log` was already taken. The
-command, the module, and the repo are all just `agentlog`.)
+(Since stillworks 0.2.0 the whole family ships in one wheel. The command, the
+module, and the repo are all just `agentlog`; the old standalone PyPI name
+`agentlog-tool` is the 0.1.x era and gets no further releases.)
 
 **Real output (2026-08-03, this machine):**
 
@@ -584,7 +584,7 @@ of them would read as five agreements when it was one assertion.
 One install gets all five, and `stillworks tools` says which ones you have:
 
 ```sh
-pip install 'stillworks[all]'
+pip install stillworks
 stillworks tools
 ```
 
