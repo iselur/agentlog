@@ -495,3 +495,60 @@ class TestGroupedDocuments(unittest.TestCase):
         from agentlog.html import render_html
         page = render_html([], [], "today")
         self.assertIn("No sessions found", page)
+
+
+def _columns(text: str) -> int:
+    """How many terminal cells a string occupies.
+
+    Stated here rather than imported, so this is a claim about terminals and not
+    a restatement of whatever ``render`` happens to do.  CJK is drawn two cells
+    wide; a combining mark sits on the character before it and takes none.
+    """
+    import unicodedata
+    total = 0
+    for char in text:
+        if unicodedata.category(char) in ("Mn", "Me"):
+            continue
+        total += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return total
+
+
+class TestColumnsAreCellsNotCharacters(unittest.TestCase):
+    """A table padded with ``ljust`` is padded in characters.
+
+    Every column here is read by eye, which reads cells.  A project named in
+    Japanese is drawn twice as wide as it is long, so the row after it starts
+    somewhere else and the table stops being a table.
+    """
+
+    def test_the_digest_project_column_lines_up(self):
+        sessions = [
+            _make_session(id="a" * 36, project="/p/api", project_name="api"),
+            _make_session(id="b" * 36, project="/p/jp",
+                          project_name="日本語プロジェクト"),
+        ]
+        rows = [ln for ln in render_digest(sessions).splitlines()
+                if "1 file" in ln]
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual(len({_columns(ln.split("1 file")[0]) for ln in rows}),
+                         1, rows)
+
+    def test_the_sessions_table_lines_up(self):
+        sessions = [
+            _make_session(id="a" * 36, project_name="api"),
+            _make_session(id="b" * 36, project_name="日本語プロジェクト"),
+            _make_session(id="c" * 36, project_name="web"),
+        ]
+        body = render_list(sessions).splitlines()[2:]
+        starts = {_columns(row.split("2026-")[0]) for row in body}
+        self.assertEqual(len(starts), 1, body)
+
+    def test_a_wide_name_is_cut_to_the_column_not_past_it(self):
+        # Twenty-four characters of Japanese is forty-eight cells; left uncut it
+        # pushes every column after it half a table to the right.
+        sessions = [_make_session(project_name="日" * 40)]
+        row = render_list(sessions).splitlines()[2]
+        self.assertLessEqual(_columns(row.split("2026-")[0]),
+                             _columns(render_list(
+                                 [_make_session(project_name="x")]
+                             ).splitlines()[2].split("2026-")[0]))

@@ -35,6 +35,46 @@ def safe_for_terminal(text: str) -> str:
         for c in text)
 
 
+def _cells(char: str) -> int:
+    """How many terminal cells one character is drawn in."""
+    if unicodedata.category(char) in ("Mn", "Me"):
+        # Drawn on top of the character before it; it takes no cell of its own.
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+
+
+def display_width(text: str) -> int:
+    """The width of a string in terminal cells, which is not its length.
+
+    Every column below is read by eye, and an eye reads cells.  A project named
+    in Japanese is drawn twice as wide as ``len`` says it is, so a table padded
+    with ``ljust`` puts the next row's columns somewhere else and stops being a
+    table.
+    """
+    if text.isascii():
+        return len(text)                # the overwhelmingly common case
+    return sum(_cells(c) for c in text)
+
+
+def _pad(text: str, width: int) -> str:
+    """``ljust`` in cells rather than characters."""
+    return text + " " * max(0, width - display_width(text))
+
+
+def _clip(text: str, width: int) -> str:
+    """The longest prefix that fits in ``width`` cells."""
+    if display_width(text) <= width:
+        return text
+    out, used = [], 0
+    for char in text:
+        cells = _cells(char)
+        if used + cells > width:
+            break
+        out.append(char)
+        used += cells
+    return "".join(out)
+
+
 def _fmt_duration(seconds: Optional[float]) -> str:
     if seconds is None or seconds < 0:
         return "?"
@@ -301,7 +341,7 @@ def render_digest(
     ]
 
     shown = groups[:max_projects]
-    name_w = min(max(max(len(g["name"]) for g in shown), 10), 24)
+    name_w = min(max(max(display_width(g["name"]) for g in shown), 10), 24)
     dur_w = max(len(_fmt_duration(g["seconds"])) for g in shown)
 
     for g in shown:
@@ -315,7 +355,7 @@ def render_digest(
         if not stats:
             stats.append("no edits or commands recorded")
         lines.append(
-            f"  {g['name'][:name_w].ljust(name_w)}  "
+            f"  {_pad(_clip(g['name'], name_w), name_w)}  "
             f"{_fmt_duration(g['seconds']).rjust(dur_w)}   " + " · ".join(stats)
         )
 
@@ -473,20 +513,20 @@ def render_list(sessions: List[Dict]) -> str:
     shorts = unique_short_ids(sessions)
     for s in sessions:
         sid = shorts.get(s["id"]) or "?"
-        project = (s["project_name"] or "?")[:24]
+        project = _clip(s["project_name"] or "?", 24)
         when = _fmt_datetime(s["start"]) if s["start"] else "?"
         dur = _fmt_duration(_window_duration(s))
         src = s.get("source", "?")[:6]
         rows.append((sid, project, when, dur, src))
 
     # Column widths — the ID column grows with the prefix length needed here
-    id_w = max([8] + [len(r[0]) for r in rows])
+    id_w = max([8] + [display_width(r[0]) for r in rows])
     w = [id_w, 24, 16, 8, 6]
-    header = "  ".join(col.ljust(w[i]) for i, col in enumerate(("ID", "PROJECT", "WHEN", "DUR", "SRC")))
+    header = "  ".join(_pad(col, w[i]) for i, col in enumerate(("ID", "PROJECT", "WHEN", "DUR", "SRC")))
     sep = "  ".join("-" * width for width in w)
     lines = [header, sep]
     for row in rows:
-        lines.append("  ".join(cell.ljust(w[i]) for i, cell in enumerate(row)))
+        lines.append("  ".join(_pad(cell, w[i]) for i, cell in enumerate(row)))
     return safe_for_terminal("\n".join(lines))
 
 
