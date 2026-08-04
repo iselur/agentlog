@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -11,6 +12,28 @@ from typing import Dict, List, Optional
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
+
+def safe_for_terminal(text: str) -> str:
+    """Strip everything in a string that a terminal would obey rather than show.
+
+    Commands, paths and titles are printed here exactly as an agent wrote them,
+    which makes this the point where text from outside meets a terminal.  Left
+    alone, an escape sequence clears the screen or retitles the window, and a
+    right-to-left override makes a command read as something other than what
+    ran.  So control characters (Cc) and formatting characters (Cf, where the
+    bidi overrides live) go, along with the two separators that are a newline to
+    a reader but not to ``str.splitlines``.
+
+    Tabs and newlines are kept: they are this module's own layout, applied after
+    the untrusted text has already passed through here.
+    """
+    if text.isprintable():
+        return text                     # the overwhelmingly common case
+    return "".join(
+        "" if (unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp")
+               and c not in "\n\t") else c
+        for c in text)
+
 
 def _fmt_duration(seconds: Optional[float]) -> str:
     if seconds is None or seconds < 0:
@@ -338,7 +361,7 @@ def render_digest(
         if skipped:
             lines.append(f"  skipped {skipped} unparseable lines")
 
-    return "\n".join(lines)
+    return safe_for_terminal("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -359,7 +382,7 @@ def render_text(sessions: List[Dict], verbose: bool = False) -> str:
         _render_session_text(s, lines, verbose=verbose, shorts=shorts)
         lines.append("")
 
-    return "\n".join(lines).rstrip()
+    return safe_for_terminal("\n".join(lines).rstrip())
 
 
 def _render_session_text(
@@ -464,7 +487,7 @@ def render_list(sessions: List[Dict]) -> str:
     lines = [header, sep]
     for row in rows:
         lines.append("  ".join(cell.ljust(w[i]) for i, cell in enumerate(row)))
-    return "\n".join(lines)
+    return safe_for_terminal("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +531,7 @@ def render_show(s: Dict) -> str:
         for cmd in s["commands"]:
             lines.append(f"  $ {cmd}")
 
-    return "\n".join(lines)
+    return safe_for_terminal("\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +565,7 @@ def render_markdown(sessions: List[Dict]) -> str:
         for s in group["sessions"]:
             lines.extend(_markdown_session(s, shorts))
 
-    return "\n".join(lines)
+    return safe_for_terminal("\n".join(lines))
 
 
 def _markdown_session(s: Dict, shorts: Dict[str, str]) -> List[str]:

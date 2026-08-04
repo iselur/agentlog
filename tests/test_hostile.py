@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -387,6 +388,79 @@ class TestOddFilesystem(HostileLogCase):
             fh.write(bytes(range(256)) * 40)
         self.write([_user()])
         self.assertSurvives("today")
+
+
+# ---------------------------------------------------------------------------
+# Text that attacks the terminal it is printed on
+
+
+class TestOutputCannotDriveTheTerminal(HostileLogCase):
+    """A command an agent ran is text from outside; printing it is not neutral.
+
+    An escape sequence reaching the terminal clears the screen, retitles the
+    window, or leaves every later line coloured — and a right-to-left override
+    lets a command read as something other than what ran.  agentlog prints
+    commands, paths and titles straight out of a log, so it is exactly the
+    program that has to strip them.
+    """
+
+    NASTY = (
+        "\033[2J\033[H",          # clear the screen
+        "\033]0;pwned\007",       # retitle the window
+        "\033[31m",               # colour everything after this line
+        "rm -rf /\rls",           # carriage return hides what really ran
+        "a\x08\x08b",             # backspace over what was printed
+        "cat ‮sym.txt",      # right-to-left override
+        "\x00\x01\x1f\x7f",       # raw control bytes
+    )
+
+    def _log_with(self, text):
+        # Stamped now rather than with the module's fixed NOW: every view below
+        # is the default "today" one, and a view that rendered "no sessions
+        # found" would pass every assertion here without ever printing the text
+        # under test.
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        self.write([
+            _user(timestamp=now),
+            _assistant([{"type": "tool_use", "id": "t1", "name": "Bash",
+                         "input": {"command": "echo " + text}}], timestamp=now),
+            _assistant([{"type": "tool_use", "id": "t2", "name": "Write",
+                         "input": {"file_path": "/home/test/demo/" + text + ".py"}}],
+                       timestamp=now),
+        ])
+
+    def assertPrintable(self, out, nasty, argv):
+        for char in out:
+            if char in "\n\t":
+                continue          # the layout's own whitespace
+            self.assertFalse(
+                ord(char) < 32 or ord(char) == 127,
+                "control character {!r} reached the terminal from {!r} via {}"
+                .format(char, nasty, " ".join(argv)))
+        self.assertNotIn("‮", out)
+
+    def test_no_view_ever_prints_a_control_character(self):
+        for nasty in self.NASTY:
+            self._log_with(nasty)
+            for argv in (("--all",), ("--all", "--verbose"), ("list", "--all"),
+                         ("show", SID[:8]), ("--all", "--md")):
+                out = self.assertSurvives(*argv)
+                self.assertNotIn("no sessions found", out, " ".join(argv))
+                self.assertPrintable(out, nasty, argv)
+
+    def test_the_command_is_still_recognisable_once_stripped(self):
+        # Stripping must not eat the text around it, or the view is safe and
+        # useless at the same time.
+        self._log_with("\033[2Jhello")
+        out = self.assertSurvives("show", SID[:8])
+        self.assertIn("hello", out)
+
+    def test_json_keeps_the_bytes_because_it_is_not_a_terminal(self):
+        # --json is consumed by another program, which wants what was really
+        # there; JSON's own escaping already makes it safe to print.
+        self._log_with("\033[2J")
+        out = self.assertSurvives("--all", "--json")
+        self.assertIn("\\u001b", out)
 
 
 if __name__ == "__main__":
