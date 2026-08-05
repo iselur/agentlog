@@ -12,12 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agentlog.parser import (
     _decode_claude_path,
     _dedup,
-    _patched_files,
-    _ts,
     find_sessions,
     parse_claude_session,
     parse_codex_session,
 )
+from agentlog.transcript import parse_time, patched_files
 from tests.fixtures import (
     claude_assistant,
     claude_user,
@@ -43,21 +42,21 @@ def _write_jsonl(path: str, records: list) -> None:
 
 class TestTsHelper(unittest.TestCase):
     def test_utc_z(self):
-        dt = _ts("2026-07-16T17:23:23.427Z")
+        dt = parse_time("2026-07-16T17:23:23.427Z")
         self.assertIsNotNone(dt)
         self.assertEqual(dt.year, 2026)
         self.assertEqual(dt.hour, 17)
 
     def test_offset(self):
-        dt = _ts("2026-07-16T10:00:00+05:00")
+        dt = parse_time("2026-07-16T10:00:00+05:00")
         self.assertIsNotNone(dt)
 
     def test_empty(self):
-        self.assertIsNone(_ts(""))
-        self.assertIsNone(_ts(None))
+        self.assertIsNone(parse_time(""))
+        self.assertIsNone(parse_time(None))
 
     def test_garbage(self):
-        self.assertIsNone(_ts("not-a-date"))
+        self.assertIsNone(parse_time("not-a-date"))
 
 
 class TestDedup(unittest.TestCase):
@@ -535,28 +534,28 @@ class TestPatchedFiles(unittest.TestCase):
 
     def test_update_marker(self):
         patch = "*** Begin Patch\n*** Update File: src/app.py\n@@\n-a\n+b\n*** End Patch"
-        self.assertEqual(_patched_files(patch), ["src/app.py"])
+        self.assertEqual(patched_files(patch), ["src/app.py"])
 
     def test_add_and_delete_markers(self):
         patch = "*** Begin Patch\n*** Add File: a.py\n*** Delete File: b.py\n*** End Patch"
-        self.assertEqual(_patched_files(patch), ["a.py", "b.py"])
+        self.assertEqual(patched_files(patch), ["a.py", "b.py"])
 
     def test_envelope_embedded_in_a_shell_string(self):
         cmd = "python3 -c \"\npatch = '''*** Begin Patch\n*** Update File: elo.py\n@@\n'''\""
-        self.assertEqual(_patched_files(cmd), ["elo.py"])
+        self.assertEqual(patched_files(cmd), ["elo.py"])
 
     def test_trailing_quote_is_stripped(self):
-        self.assertEqual(_patched_files("*** Update File: app.py'"), ["app.py"])
+        self.assertEqual(patched_files("*** Update File: app.py'"), ["app.py"])
 
     def test_plain_command_has_no_files(self):
-        self.assertEqual(_patched_files("git status"), [])
+        self.assertEqual(patched_files("git status"), [])
 
     def test_empty_and_marker_without_a_path(self):
-        self.assertEqual(_patched_files(""), [])
-        self.assertEqual(_patched_files("*** Update File:   "), [])
+        self.assertEqual(patched_files(""), [])
+        self.assertEqual(patched_files("*** Update File:   "), [])
 
     def test_diff_body_mentioning_a_marker_word_is_not_matched(self):
-        self.assertEqual(_patched_files("+ # see *** Update File docs"), [])
+        self.assertEqual(patched_files("+ # see *** Update File docs"), [])
 
 
 class TestCodexFileTracking(unittest.TestCase):

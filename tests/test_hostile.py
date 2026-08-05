@@ -217,8 +217,8 @@ class TestTimestamps(HostileLogCase):
         self.assertSurvives("today")
 
     def test_naive_timestamp_is_read_as_utc(self):
-        from agentlog.parser import _ts
-        parsed = _ts("2026-08-03T12:00:00")
+        from agentlog.transcript import parse_time
+        parsed = parse_time("2026-08-03T12:00:00")
         self.assertIsNotNone(parsed)
         self.assertIsNotNone(parsed.tzinfo)
         self.assertEqual(parsed.utcoffset().total_seconds(), 0)

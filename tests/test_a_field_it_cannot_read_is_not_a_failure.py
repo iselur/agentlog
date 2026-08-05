@@ -32,7 +32,7 @@ import unittest
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import parser  # noqa: E402
+from agentlog import parser, transcript  # noqa: E402
 from tests.fixtures import make_codex_dir  # noqa: E402
 
 SID = "019fc384-aaaa-bbbb-cccc-ddddeeeeffff"
@@ -75,24 +75,24 @@ class TestScriptOutputOfAnUnexpectedShape(unittest.TestCase):
     """`_script_failed`, which reads free text rather than a number."""
 
     def test_the_helper_can_still_see_a_real_failure(self):
-        marker = parser._SCRIPT_FAILED
-        self.assertTrue(parser._script_failed(marker + " something"))
-        self.assertTrue(parser._script_failed(
+        marker = transcript._SCRIPT_FAILED
+        self.assertTrue(transcript.script_failed(marker + " something"))
+        self.assertTrue(transcript.script_failed(
             [{"text": marker + " something"}]))
 
     def test_output_that_is_neither_text_nor_blocks_is_not_a_failure(self):
-        self.assertFalse(parser._script_failed(None))
-        self.assertFalse(parser._script_failed({"text": "whatever"}))
-        self.assertFalse(parser._script_failed(7))
+        self.assertFalse(transcript.script_failed(None))
+        self.assertFalse(transcript.script_failed({"text": "whatever"}))
+        self.assertFalse(transcript.script_failed(7))
 
     def test_a_block_list_with_something_else_in_it_is_read_not_refused(self):
         # Content blocks are a list of dicts by contract, and contracts slip.
         # A bare string among them, or a block whose `text` is not a string,
         # is a block this cannot read — the rest of the list is still read.
-        marker = parser._SCRIPT_FAILED
-        self.assertTrue(parser._script_failed(
+        marker = transcript._SCRIPT_FAILED
+        self.assertTrue(transcript.script_failed(
             [{"text": marker + " nope"}, "a bare string", {"text": None}]))
-        self.assertFalse(parser._script_failed(
+        self.assertFalse(transcript.script_failed(
             ["a bare string", {"text": None}, {}]))
 
 
@@ -120,15 +120,15 @@ class TestAPatchEnvelopeWithNoText(unittest.TestCase):
 
     def test_the_scanner_still_finds_a_patched_file(self):
         self.assertEqual(
-            parser._patched_files("*** Update File: src/app.py"),
+            transcript.patched_files("*** Update File: src/app.py"),
             ["src/app.py"])
 
     def test_a_command_that_is_not_text_finds_nothing_and_does_not_raise(self):
         # `patch or cmd` at the call site can be None when neither field was
         # written, and `"*** " not in None` is a TypeError that takes the
         # whole session file down with it.
-        self.assertEqual(parser._patched_files(None), [])
-        self.assertEqual(parser._patched_files(""), [])
+        self.assertEqual(transcript.patched_files(None), [])
+        self.assertEqual(transcript.patched_files(""), [])
 
 
 class TestARealSessionWithNothingWrong(unittest.TestCase):
