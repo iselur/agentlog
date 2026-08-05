@@ -8,10 +8,10 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from agentlog.clock import duration as _fmt_duration
 from agentlog.render import (
     _busiest_hour,
     _cmd_headline,
-    _fmt_duration,
     _relative_path,
     group_by_project,
     render_digest,
