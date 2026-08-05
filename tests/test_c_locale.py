@@ -24,7 +24,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
+
+from tests.fixtures import a_now_that_keeps
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -40,8 +42,14 @@ def _ascii_env():
     return env
 
 
+# The oldest record this file writes is thirty minutes back, and it means
+# "earlier today".  Anchor once so the five stamps keep their spacing, and see
+# fixtures.a_now_that_keeps for why the anchor is not simply now.
+_NOW = a_now_that_keeps(30)
+
+
 def _ago(minutes):
-    return (datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat()
+    return (_NOW - timedelta(minutes=minutes)).astimezone(timezone.utc).isoformat()
 
 
 class TestAnAsciiMachine(unittest.TestCase):

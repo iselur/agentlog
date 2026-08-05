@@ -43,6 +43,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 from agentlog.window import _filter_sessions
+from tests.fixtures import a_now_that_keeps
 
 
 def _local(dt):
@@ -185,11 +186,17 @@ class TestTheReportItself(unittest.TestCase):
         self.home = tempfile.mkdtemp(prefix="agentlog_overnight_")
         self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
 
-    def _write(self, offsets_minutes):
+    def _write(self, offsets_minutes, must_reach_back=0):
+        """Write one session's worth of commands, that many minutes back each.
+
+        `must_reach_back` says how far back the *test* needs to still be today;
+        offsets beyond it are meant to land in yesterday and are left there.
+        See fixtures.a_now_that_keeps.
+        """
         import json
         folder = os.path.join(self.home, ".claude", "projects", "-tmp-proj")
         os.makedirs(folder, exist_ok=True)
-        now = datetime.now().astimezone()
+        now = a_now_that_keeps(must_reach_back)
         path = os.path.join(folder, "4ef1361b-07e4-4bc9-bb29-1783b761d677.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
             for i, mins in enumerate(offsets_minutes):
@@ -212,7 +219,7 @@ class TestTheReportItself(unittest.TestCase):
     def test_one_command_today_does_not_headline_as_hours(self):
         # The first event is far enough back to be yesterday whatever time the
         # suite runs at; the second is this minute.
-        self._write([60 * 30, 1])
+        self._write([60 * 30, 1], must_reach_back=1)
         out = self._report()
         self.assertIn("1 command", out)
         self.assertNotIn("h ", out.split("\n")[0],
@@ -223,7 +230,7 @@ class TestTheReportItself(unittest.TestCase):
         # Half an hour of steady work, so that the idle-gap rule has nothing to
         # take off it and the headline is the plain span.  The rule itself has
         # its own file, tests/test_idle_gaps.py.
-        self._write(list(range(40, 9, -2)))
+        self._write(list(range(40, 9, -2)), must_reach_back=40)
         out = self._report()
         self.assertIn("30m", out, out)
 

@@ -34,10 +34,17 @@ from datetime import datetime, timedelta, timezone
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+from tests.fixtures import a_now_that_keeps
+
+
+# The oldest record here is an hour back, and it means "earlier today".  See
+# fixtures.a_now_that_keeps for why that is not the same as an hour before now.
+_NOW = a_now_that_keeps(60)
+
 
 def _ago(seconds):
-    return (datetime.now(timezone.utc)
-            - timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (_NOW - timedelta(seconds=seconds)).astimezone(
+        timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def run_with_no_reader(args, env=None):

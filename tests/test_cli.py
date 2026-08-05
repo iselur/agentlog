@@ -487,9 +487,16 @@ class TestDigestCLI(unittest.TestCase):
         return code, out
 
     def _ts(self, minutes_ago=5):
-        from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
-        return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        """A moment `minutes_ago` back that is still today.
+
+        See fixtures.a_now_that_keeps: "five minutes ago" and "today" are the
+        same thing except between 00:00 and 00:05.
+        """
+        from datetime import timedelta, timezone
+
+        from tests.fixtures import a_now_that_keeps
+        now = a_now_that_keeps(minutes_ago) - timedelta(minutes=minutes_ago)
+        return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     def _claude_session(self, sid, cwd, tools=None, error_for=None):
         from tests.fixtures import claude_assistant, claude_user_with_error

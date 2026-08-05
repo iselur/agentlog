@@ -10,7 +10,36 @@ import itertools
 import json
 import os
 import tempfile
+from datetime import datetime, timedelta
 from typing import List
+
+
+def midnight_today(now: datetime = None) -> datetime:
+    """The start of the local day the tests are running in."""
+    now = now or datetime.now().astimezone()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def a_now_that_keeps(minutes_of_history: float, now: datetime = None) -> datetime:
+    """A "now" with that many minutes of *today* behind it.
+
+    Fixtures write records "forty minutes ago" and mean "earlier today".  For
+    the first forty minutes of a day those are two different things: the
+    records land in yesterday, `agentlog today` correctly reports an empty
+    day, and a suite that passed all evening fails until 00:40.
+
+    Pinning the clock is not on offer here — these fixtures are read by
+    subprocess runs of the real command, which reads the real one — so the
+    fixture's clock is moved forward off midnight instead, by however far back
+    it needs to reach.  Anchor once per run and subtract the offsets from what
+    comes back: anchoring each record separately would flatten them all onto
+    midnight and collapse the span being measured.
+
+    The real clock is handed back untouched for the rest of the day, which is
+    to say almost always.
+    """
+    now = now or datetime.now().astimezone()
+    return max(now, midnight_today(now) + timedelta(minutes=minutes_of_history))
 
 # Real Claude Code records each carry their own uuid, and the parser now takes
 # that seriously: a uuid seen twice is one event written into two files, and is
