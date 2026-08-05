@@ -556,6 +556,23 @@ class TestColumnsAreCellsNotCharacters(unittest.TestCase):
         starts = {_columns(row.split("2026-")[0]) for row in body}
         self.assertEqual(len(starts), 1, body)
 
+    def test_a_name_with_a_character_a_terminal_obeys_still_lines_up(self):
+        # The regression this table had for as long as it has existed.  The
+        # column is measured from the value, the whole table is sanitised in one
+        # go at the end, and sanitising used to *delete* -- so a name holding a
+        # character a terminal obeys was counted as one cell, given one cell,
+        # and then had that cell taken away again, and that row alone ended a
+        # cell to the left of every other.  Nothing caught it; every test that
+        # laid out a table used names made of letters.
+        sessions = [
+            _make_session(id="a" * 36, project_name="api"),
+            _make_session(id="b" * 36, project_name="ap\x1bi"),
+            _make_session(id="c" * 36, project_name="web"),
+        ]
+        body = render_list(sessions).splitlines()[2:]
+        starts = {_columns(row.split("2026-")[0]) for row in body}
+        self.assertEqual(len(starts), 1, body)
+
     def test_a_wide_name_is_cut_to_the_column_not_past_it(self):
         # Twenty-four characters of Japanese is forty-eight cells; left uncut it
         # pushes every column after it half a table to the right.
