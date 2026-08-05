@@ -97,12 +97,10 @@ class HostileLogCase(unittest.TestCase):
         """
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
-            try:
-                code = main(list(argv) + ["--home", self.home])
-            except SystemExit as exit_:
-                # argparse exits rather than returning; from outside the
-                # process the two are the same thing.
-                code = exit_.code if isinstance(exit_.code, int) else 2
+            # argparse still exits rather than returning -- `main` catches
+            # that and hands the number back, so from here it is a return
+            # value like any other.
+            code = main(list(argv) + ["--home", self.home])
         return code, out.getvalue(), err.getvalue()
 
     def assertSurvives(self, *argv):
