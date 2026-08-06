@@ -219,6 +219,36 @@ class TestFilesWrittenByAPatch(Case):
         s = self.parsed([meta(), rec])
         self.assertEqual(s["files_written"], [])
 
+    def test_a_record_that_does_not_say_is_a_patch_that_applied(self):
+        # A session cut off mid-write, or a Codex that has not got round to
+        # saying.  The failures are the ones that say so; reading silence the
+        # other way would turn a truncated log into a session full of errors
+        # that never happened, and lose the writes it did make at the same
+        # time.  Both halves are asserted because one default decides both.
+        rec = patch_end(self.PATHS)
+        rec["payload"].pop("success")
+        s = self.parsed([meta(), rec])
+        self.assertEqual(sorted(s["files_written"]), sorted(self.PATHS))
+        self.assertEqual(s["errors"], 0)
+
+    def test_a_failure_across_many_files_names_the_first_three(self):
+        # Whatever this says has to fit the one line a live tail gives it, so
+        # it stops at three.  Where it stops is a decision, not an accident:
+        # the number lives in `transcript.py` now, and this is what pins it.
+        many = ["/home/you/api/d.py", "/home/you/api/a.py",
+                "/home/you/api/c.py", "/home/you/api/b.py"]
+        s = self.parsed([meta(), patch_end(many, success=False)])
+        errs = [t for _, k, t in s["events"] if k == "error"]
+        self.assertEqual(errs, ["patch did not apply: a.py, b.py, c.py"])
+
+    def test_a_failure_that_named_no_files_still_says_what_happened(self):
+        # Real logs carry these: a patch that failed before it worked out
+        # what it was going to touch.  There is nothing to list, and a
+        # trailing colon with nothing after it reads like truncated output.
+        s = self.parsed([meta(), patch_end([], success=False)])
+        errs = [t for _, k, t in s["events"] if k == "error"]
+        self.assertEqual(errs, ["patch did not apply"])
+
 
 class TestAScriptThatFailed(Case):
 
