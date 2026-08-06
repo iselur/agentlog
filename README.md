@@ -123,7 +123,7 @@ For each session it derives:
 | start / end / duration | first and last `timestamp` fields seen |
 | models | `message.model` in `assistant` records |
 | user turns | `type == "user"` records that are a person typing — not tool results, not subagent prompts (see below) |
-| files read | `Read` tool-use calls (`input.file_path`) |
+| files read | `Read` tool-use calls (`input.file_path`); for Codex, the paths handed to a reading command in a `custom_tool_call` snippet or an older `exec_command` — Codex has no read tool, so a read is a `cat` or a `sed -n` and the command text is the only record of it |
 | files written | `Write`, `Edit`, `MultiEdit` tool-use calls (`input.file_path`) and `NotebookEdit` (`input.notebook_path`); Codex `patch_apply_end` records, plus `*** Update File:` lines inside older `apply_patch` envelopes |
 | commands | `Bash` tool-use calls (`input.command`); Codex `custom_tool_call` script snippets, plus older `exec_command` and `apply_patch` calls |
 | errors | `tool_result` records with `is_error: true`; Codex command output with a non-zero exit code, a patch that would not apply, and an `mcp_tool_call_end` whose `result` is an `Err` |
@@ -323,6 +323,26 @@ failure this tool has: an empty list is indistinguishable from a quiet session,
 so a whole format going unread looks like the agent was idle rather than like a
 bug.  Both known Codex shapes are parsed side by side rather than one replacing
 the other, and `--verbose` names files that could not be read at all.
+
+**A Codex read is a guess made from a command, and it under-reports on
+purpose.**  Claude Code reads a file by calling a tool named `Read`, so the path
+is a field.  Codex has no read tool: it reads by running `sed -n '1,200p'
+notes.md`, and the command text is the only record.  Every Codex session
+therefore reported *no files read* until v0.2.5 — not an error, just a zero that
+looked like a fact.
+
+They are read out of the command now, by a rule built to miss rather than to
+invent: a path is counted only when the verb opens everything it is handed
+(`cat`, `head`, `tail`, `sed`, `wc`, `md5sum` and a dozen more).  Nothing that
+searches is counted at all — `rg pattern src/` puts a pattern, a glob and a
+directory in the position a path goes, and the text cannot say which is which,
+so `grep` and `rg` reads are missed on purpose.  A file named in a digest that
+was never opened costs more than one that is missing.
+
+Measured against the 1,217 Codex sessions on the machine this was written on:
+3,021 of 8,322 commands name a read, 944 sessions gain one, and of 4,472 claimed
+paths 87.5% are a file that still exists — the rest are the temporary files a
+session makes and deletes.  One was a directory.
 
 **A log file it cannot read is named, not skipped.**  A file whose permissions
 changed, or one truncated mid-write into bytes that no longer parse, cannot
