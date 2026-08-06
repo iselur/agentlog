@@ -10,7 +10,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agentlog.parser import (
-    _decode_claude_path,
+    decode_claude_project,
     _dedup,
     find_sessions,
     parse_claude_session,
@@ -70,11 +70,14 @@ class TestDedup(unittest.TestCase):
 
 class TestDecodeClaudePath(unittest.TestCase):
     def test_basic(self):
-        # -home-val-orchestrator -> home/val/orchestrator (leading / dropped by encoding)
-        # We just check it starts with the expected prefix
-        result = _decode_claude_path("/home/val/.claude/projects/-home-val-orchestrator/session.jsonl")
-        self.assertIn("home", result)
-        self.assertIn("val", result)
+        # This used to assert `"home" in result` and `"val" in result`, which is
+        # true of `/home/val/orchestrator` and of `home/val/orchestrator` alike
+        # -- and the second was what it actually returned for two years.  An
+        # assertion that cannot tell the answer from the bug is not a test.
+        self.assertEqual(
+            decode_claude_project(
+                "/home/val/.claude/projects/-home-val-orchestrator/s.jsonl"),
+            "/home/val/orchestrator")
 
 
 class TestParseClaudeSession(unittest.TestCase):
