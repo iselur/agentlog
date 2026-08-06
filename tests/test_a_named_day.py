@@ -26,7 +26,7 @@ from datetime import date, datetime, timedelta
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
-from agentlog import window, parser  # noqa: E402
+from agentlog import when, window, parser  # noqa: E402
 
 SID = "3c3c3c3c-0000-4000-8000-000000000003"
 
@@ -144,7 +144,8 @@ class TestTheOffsetForm(Case):
 
     def test_zero_days_ago_is_today_even_though_since_refuses_it(self):
         # `since 0d` is a window from now until now.  `on 0d` is a day.
-        self.assertIsNone(window._parse_since("0d"))
+        with self.assertRaises(ValueError):
+            when.parse_moment("0d")
         got = self.json_of("on", "0d")
         today = self.json_of("today")
         self.assertEqual([s["id"] for s in got], [s["id"] for s in today])

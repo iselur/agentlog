@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agentlog.cli import main
-from agentlog.window import _parse_since, _filter_sessions
+from agentlog.window import _filter_sessions
 from tests.fixtures import (
     claude_user,
     claude_assistant,
@@ -31,40 +31,6 @@ def _setup_claude_project(tmp: str, sessions_records: list) -> None:
     os.makedirs(proj, exist_ok=True)
     for i, recs in enumerate(sessions_records):
         _write_jsonl(os.path.join(proj, f"sess{i}.jsonl"), recs)
-
-
-class TestParseSince(unittest.TestCase):
-    def test_iso_date(self):
-        dt = _parse_since("2026-07-15")
-        self.assertIsNotNone(dt)
-        self.assertEqual(dt.year, 2026)
-        self.assertEqual(dt.month, 7)
-        self.assertEqual(dt.day, 15)
-
-    def test_days_offset(self):
-        dt = _parse_since("3d")
-        self.assertIsNotNone(dt)
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        self.assertAlmostEqual(diff.total_seconds() / 86400, 3, delta=0.1)
-
-    def test_hours_offset(self):
-        dt = _parse_since("12h")
-        self.assertIsNotNone(dt)
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-        diff = now - dt
-        self.assertAlmostEqual(diff.total_seconds() / 3600, 12, delta=0.1)
-
-    def test_weeks_offset(self):
-        dt = _parse_since("2w")
-        self.assertIsNotNone(dt)
-
-    def test_invalid_returns_none(self):
-        self.assertIsNone(_parse_since("yesterday"))
-        self.assertIsNone(_parse_since("garbage"))
-        self.assertIsNone(_parse_since("3x"))
 
 
 class TestFilterSessions(unittest.TestCase):

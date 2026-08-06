@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agentlog import window as _window  # noqa: E402
+from agentlog.when import parse_moment  # noqa: E402
 
 
 class _InZone(unittest.TestCase):
@@ -70,22 +71,22 @@ class _InZone(unittest.TestCase):
 class TestAnIsoDateIsMidnightOnThatDate(_InZone):
 
     def test_a_winter_date(self):
-        got = self.window._parse_since("2026-01-15")
+        got = parse_moment("2026-01-15")
         self.assertEqual(got, self.local_midnight(2026, 1, 15),
                          "window opened at the wrong moment")
 
     def test_a_summer_date(self):
-        got = self.window._parse_since("2026-07-15")
+        got = parse_moment("2026-07-15")
         self.assertEqual(got, self.local_midnight(2026, 7, 15))
 
     def test_the_day_daylight_saving_starts(self):
         # 2026-03-29 in Berlin: 02:00 does not exist.  Midnight does.
-        got = self.window._parse_since("2026-03-29")
+        got = parse_moment("2026-03-29")
         self.assertEqual(got, self.local_midnight(2026, 3, 29))
 
     def test_the_day_daylight_saving_ends(self):
         # 2026-10-25 in Berlin: 02:00 happens twice.
-        got = self.window._parse_since("2026-10-25")
+        got = parse_moment("2026-10-25")
         self.assertEqual(got, self.local_midnight(2026, 10, 25))
 
     def test_both_halves_of_the_year_agree_with_utc(self):
@@ -95,7 +96,7 @@ class TestAnIsoDateIsMidnightOnThatDate(_InZone):
                     "2026-06-30", "2026-10-24", "2026-10-25", "2026-12-31"):
             y, m, d = (int(p) for p in iso.split("-"))
             with self.subTest(date=iso):
-                self.assertEqual(self.window._parse_since(iso),
+                self.assertEqual(parse_moment(iso),
                                  self.local_midnight(y, m, d))
 
 
@@ -134,7 +135,7 @@ class TestAZoneWithADifferentShift(_InZone):
         for iso in ("2026-01-15", "2026-07-15", "2026-09-06", "2026-04-05"):
             y, m, d = (int(p) for p in iso.split("-"))
             with self.subTest(date=iso):
-                self.assertEqual(self.window._parse_since(iso),
+                self.assertEqual(parse_moment(iso),
                                  self.local_midnight(y, m, d))
 
 
@@ -144,18 +145,17 @@ class TestUTCIsUnaffected(_InZone):
     zone = "UTC"
 
     def test_dates_are_plain_utc_midnight(self):
-        got = self.window._parse_since("2026-01-15")
+        got = parse_moment("2026-01-15")
         self.assertEqual(got, datetime(2026, 1, 15, tzinfo=timezone.utc))
 
     def test_offsets_still_work(self):
-        got = self.window._parse_since("3d")
-        self.assertIsNotNone(got)
-        self.assertLess(got, datetime.now(timezone.utc))
+        self.assertLess(parse_moment("3d"), datetime.now(timezone.utc))
 
     def test_nonsense_is_still_rejected(self):
         for bad in ("", "tomorrow", "0d", "-3d", "2026-13-01", "3x"):
             with self.subTest(value=bad):
-                self.assertIsNone(self.window._parse_since(bad))
+                with self.assertRaises(ValueError):
+                    parse_moment(bad)
 
 
 class TestTheZoneIsReadAtTheMomentOfTheQuestion(unittest.TestCase):
@@ -183,7 +183,7 @@ class TestTheZoneIsReadAtTheMomentOfTheQuestion(unittest.TestCase):
     def _midnight_in(self, zone):
         os.environ["TZ"] = zone
         time.tzset()
-        return _window._parse_since("2026-01-15")
+        return parse_moment("2026-01-15")
 
     def test_two_zones_in_one_process_give_two_answers(self):
         # +01:00 in January against +00:00: one hour apart, and the same

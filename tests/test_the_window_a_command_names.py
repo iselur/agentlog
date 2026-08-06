@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agentlog.window import Unparseable, Window, _local_midnight  # noqa: E402
+from agentlog.when import HOW_TO_SPELL_IT, parse_moment  # noqa: E402
 
 # A Wednesday afternoon.  Fixed, because every assertion below about what a
 # period *means* is only stable if the moment it is asked at is.
@@ -175,7 +176,22 @@ class TestWhatAPersonIsToldWhenItIsWrong(unittest.TestCase):
     def test_an_argument_it_cannot_read_is_quoted_back(self):
         text = self.message("since", "tuesday", NOW)
         self.assertIn("tuesday", text, "the person cannot see which word failed")
-        self.assertIn("2026-07-01", text, "no example of a form that works")
+        self.assertIn(HOW_TO_SPELL_IT, text, "no example of a form that works")
+
+    def test_every_example_it_offers_is_one_it_takes(self):
+        # This used to name a date literally, and the message named a
+        # different one, and both were right about a form that worked.  The
+        # thing actually worth asserting is that nothing in the sentence is a
+        # spelling this command would turn round and reject -- which is what
+        # `agentlog --help` did with `2w` for as long as anybody looked.
+        text = self.message("since", "tuesday", NOW)
+        offered = [word.strip(" ,") for word in
+                   text.split("try ", 1)[1].replace(" or a date like", ",").split(",")]
+        self.assertGreaterEqual(len(offered), 5, offered)
+        for example in offered:
+            with self.subTest(example):
+                self.assertIsNotNone(parse_moment(example, NOW))
+                Window.parse("since", example, NOW)
 
     def test_on_with_nothing_after_it_says_what_to_put_there(self):
         text = self.message("on", None, NOW)

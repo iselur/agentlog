@@ -62,7 +62,7 @@ agentlog today --html today.html
 ```
 agentlog                        same as: agentlog today
 agentlog today | yesterday | week
-agentlog since DATE             ISO date (2026-07-15) or offset (3d, 12h, 2w)
+agentlog since WHEN             10m, 2h, 3d, 1w, or a date like 2026-08-03
 agentlog on DAY                 one whole day: 2026-07-31, or 3d for three
                                 days ago
 agentlog show SESSION_ID        one session in full detail
@@ -419,11 +419,12 @@ to back and each thing that happened is counted once between them.
 `on DAY` names any one of those days: `agentlog on 2026-07-31`, or `on 3d` for
 three days ago.  `since` cannot answer this — `since 2026-07-31` means "from
 Friday until now", never "Friday" — so before this the only two days you could
-ask about were today and yesterday.  The two commands take the same argument
-with one deliberate difference: `since 0d` is a window from now until now and is
-refused as a typo, while `on 0d` is today.  A length is refused rather than
-rounded (`12h` and `2w` name a duration, not a day) and says which command wants
-one.
+ask about were today and yesterday.  `on` takes a date or a number of days, and
+that is the whole of the overlap with `since`: `10m`, `12h` and `2w` name a
+duration rather than a day, so `on` refuses them rather than rounding, and says
+which command wants one.  `0d` is the one place the two part company on purpose
+— `since 0d` is a window from now until now and is refused as a typo, while
+`on 0d` is today.
 
 **Two clocks are involved, and the log's wins.**  The timestamps come from
 whichever machine wrote the log, which may be ahead of the one reading it — an
