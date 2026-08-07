@@ -2,8 +2,8 @@
 
 The README shows what compaction looks like:
 
-    context  compacted 98x — 3h 59m spent, 9,944,222 tokens dropped
-    compacted 127x in 6 sessions · 4h 54m spent, 13,239,126 tokens dropped
+    context  compacted 98x — 3h 59m spent on it, 9,944,222 tokens dropped
+    compacted 127x in 6 sessions · 4h 54m spent on it, 13,239,126 tokens dropped
 
 Both are real output, not illustrations — the first is one session, the second
 is a week.  That is the reason they are worth showing and also the reason they
@@ -39,10 +39,10 @@ README = os.path.join(_ROOT, "README.md")
 _DURATION = re.compile(r"(?:(\d+)h )?(?:(\d+)m )?(?:(\d+)s )?", re.ASCII)
 
 _SHOW_LINE = re.compile(
-    r"^context\s+compacted (\d+)x — (.+?) spent, ([\d,]+) tokens dropped$",
+    r"^context\s+compacted (\d+)x — (.+?) spent on it, ([\d,]+) tokens dropped$",
     re.MULTILINE)
 _DIGEST_LINE = re.compile(
-    r"^compacted (\d+)x in (\d+) sessions · (.+?) spent, ([\d,]+) tokens dropped$",
+    r"^compacted (\d+)x in (\d+) sessions · (.+?) spent on it, ([\d,]+) tokens dropped$",
     re.MULTILINE)
 
 
@@ -88,7 +88,7 @@ class TestTheREADMEStillShowsWhatItProduces(unittest.TestCase):
             session = {"compactions": spread(count, seconds(spent), dropped)}
             self.assertEqual(
                 render._fmt_compactions(session),
-                f"compacted {count}x — {spent} spent, {dropped:,} tokens dropped",
+                f"compacted {count}x — {spent} spent on it, {dropped:,} tokens dropped",
                 "README.md quotes output agentlog no longer produces")
 
     def test_the_digest_example_is_what_the_digest_would_print(self):
@@ -105,7 +105,7 @@ class TestTheREADMEStillShowsWhatItProduces(unittest.TestCase):
             self.assertEqual(
                 render.compaction_note(sessions),
                 f"compacted {count}x in {in_sessions} sessions"
-                f" · {spent} spent, {dropped:,} tokens dropped",
+                f" · {spent} spent on it, {dropped:,} tokens dropped",
                 "README.md quotes output agentlog no longer produces")
 
 

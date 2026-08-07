@@ -158,14 +158,14 @@ own summary looks exactly like one that was merely slow.  `agentlog show` now
 prints a `context` line when there was one:
 
 ```
-context  compacted 98x — 3h 59m spent, 9,944,222 tokens dropped
+context  compacted 98x — 3h 59m spent on it, 9,944,222 tokens dropped
 ```
 
 The digest says it too, because `show` needs a session id and a session id
 needs you to already suspect which session to look at:
 
 ```
-compacted 127x in 6 sessions · 4h 54m spent, 13,239,126 tokens dropped
+compacted 127x in 6 sessions · 4h 54m spent on it, 13,239,126 tokens dropped
 ```
 
 The number of sessions is in that line on purpose.  Twelve compactions in one
