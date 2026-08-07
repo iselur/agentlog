@@ -312,7 +312,13 @@ class TestItCannotComeBack(unittest.TestCase):
         self.assertIn(
             "room = _DIGEST_WIDTH - display_width(label) - display_width(times)",
             source)
-        self.assertIn("_fitted_headline(head, more_below, room)", source)
+        # The project root goes in with the room, because the shortening that
+        # buys this row its cells back is the one that knows what the reader is
+        # already looking at.  Passing the width and not the root leaves the row
+        # spending eighteen cells saying `/home/val/r102-bench` again.
+        self.assertIn("_fitted_headline(head, more_below, room,\n"
+                      "                                                  "
+                      'g["path"])', source)
         # And cut once, there.  A fixed width upstream of this -- 56 cells, on
         # a row that never has fewer than 59 -- makes the row's own width
         # decorative, so widening the digest moves nothing and the count
@@ -323,11 +329,18 @@ class TestItCannotComeBack(unittest.TestCase):
     #: Written out by hand rather than counted, because a count says nothing
     #: about *which* one went missing: a view that quietly grows its own cutter
     #: again leaves the total unchanged and passes every test above this one.
+    #:
+    #: Two spellings appear, and they are one rule rather than two.  A row
+    #: holding a path calls `shortened`; a row holding a *command* calls
+    #: `paths_as_shown`, which shortens the paths inside the line and then hands
+    #: what is left to the very same cutter.  The thing this list exists to
+    #: catch is a view growing its own cutter locally, and neither of these is
+    #: that -- both live in the file the family shares.
     CUT_ROWS = sorted([
         # a command's headline, in the room the row carrying it has
-        'return shortened(line, width - display_width(more)) + more',
+        'return paths_as_shown(line, project, width - display_width(more)) + more',
         # a command in the detail view
-        'return shortened(cmd.replace("\\n", " ").strip(), width)',
+        'return paths_as_shown(cmd.replace("\\n", " ").strip(), project, width)',
         # the digest's project column
         'f"  {_pad(shortened(g[\'name\'], name_w), name_w)}  "',
         # a file path in the detail view, keeping its basename
@@ -339,7 +352,8 @@ class TestItCannotComeBack(unittest.TestCase):
     def test_every_row_that_is_cut_goes_through_the_one_rule(self):
         source = self._source()
         found = sorted(ln.strip() for ln in source.splitlines()
-                       if "shortened(" in ln and not ln.startswith("def "))
+                       if ("shortened(" in ln or "paths_as_shown(" in ln)
+                       and not ln.startswith("def "))
         self.assertEqual(found, self.CUT_ROWS,
                          "a row is being cut somewhere other than the one rule")
         for gone in ("def _clip(", "def _truncate("):
