@@ -513,6 +513,62 @@ class TestDigestCLI(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("alpha", out)
 
+    def test_project_flag_takes_the_slash_tab_completion_adds(self):
+        # `--project ~/alpha/` is what a shell types for you when you complete
+        # a directory.  Without the strip it is not a substring of
+        # `/home/test/alpha`, so the slash alone decided between the project
+        # and "no sessions found" -- which reads as an answer, not a miss.
+        sid = "dg-000015-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today",
+                               "--project", "/home/test/alpha/"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha", out)
+
+    def test_project_flag_ignores_case_in_a_path(self):
+        sid = "dg-000016-0000-0000-0000-000000000001"
+        _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
+        code, out = self._run(["--home", self.tmp, "today",
+                               "--project", "/HOME/TEST/Alpha"])
+        self.assertEqual(code, 0)
+        self.assertIn("alpha", out)
+
+    def test_project_flag_finds_a_session_that_never_said_where_it_ran(self):
+        # A codex log whose meta record carries no cwd has no directory to be
+        # matched on, so the digest shows the first eight characters of its id
+        # in the project column instead.  That is the only name the session
+        # has, and what is on screen has to be a thing you can type -- else the
+        # one session you cannot identify any other way is also the one you
+        # cannot filter down to.
+        #
+        # Codex and not claude: a claude log lives in a directory named after
+        # the project, so an empty cwd is filled back in from the path and the
+        # case cannot be reached from that side.
+        from tests.fixtures import (
+            codex_function_call,
+            codex_session_meta,
+            codex_user_message,
+            make_codex_dir,
+        )
+        ts = self._ts()
+        sid = "019fc4b9-0000-7000-8000-0000000000aa"
+        sessions_dir = make_codex_dir(self.tmp)
+        recs = [
+            codex_session_meta(sid, "", ts),
+            codex_user_message(ts),
+            codex_function_call("exec_command", {"cmd": "cargo build"}, ts,
+                                call_id="c1"),
+        ]
+        _write_jsonl(os.path.join(sessions_dir, f"rollout-{sid}.jsonl"), recs)
+        code, out = self._run(["--home", self.tmp, "today",
+                               "--project", sid[:8]])
+        self.assertEqual(code, 0)
+        # Not `assertIn(sid[:8], out)`: the "no sessions found for" line quotes
+        # the needle straight back, so that assertion passes whether or not the
+        # session was found.
+        self.assertNotIn("no sessions found", out)
+        self.assertIn("1 command", out)
+
     def test_project_flag_with_no_match_is_not_an_error(self):
         sid = "dg-000006-0000-0000-0000-000000000001"
         _setup_claude_project(self.tmp, [self._claude_session(sid, "/home/test/alpha")])
