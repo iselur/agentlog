@@ -9,10 +9,10 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from agentlog.clock import duration as _fmt_duration
+from agentlog.terminal import display_width
 from agentlog.render import (
     _busiest_hour,
     _cmd_headline,
-    _relative_path,
     group_by_project,
     render_digest,
     render_json,
@@ -221,29 +221,45 @@ class TestCmdHeadline(unittest.TestCase):
         self.assertEqual(_cmd_headline("   \n  "), "")
 
 
-class TestRelativePath(unittest.TestCase):
+class TestTheEditedRowFitsTheDigest(unittest.TestCase):
+    """How a path is written is `which_file.py`; how much room it gets is here.
 
-    def test_path_inside_project_is_relative(self):
-        self.assertEqual(
-            _relative_path("/home/test/proj/src/app.py", "/home/test/proj"),
-            "src/app.py",
-        )
+    The row used to allow each name 34 characters and then not hold it to
+    them, so three deep paths ran past the edge of an 80-column terminal --
+    directly under the project row, which is measured to the cell.  See
+    `test_the_way_a_file_path_is_written.py` for the spelling itself.
+    """
 
-    def test_trailing_slash_on_root(self):
-        self.assertEqual(
-            _relative_path("/home/test/proj/a.py", "/home/test/proj/"), "a.py"
-        )
+    def _digest(self, files):
+        at = datetime(2026, 8, 7, 10, 0, tzinfo=timezone.utc)
+        return render_digest([{
+            "id": "s1", "project": "/home/test/proj", "project_name": "proj",
+            "start": at, "end": at, "win_start": at, "win_end": at,
+            "files_read": [], "files_written": files, "commands": [],
+            "errors": 0, "models": [], "user_turns": 1, "source": "claude",
+            "active_spans": [(at, at)],
+        }])
 
-    def test_path_outside_project_falls_back_to_basename(self):
-        self.assertEqual(_relative_path("/etc/hosts", "/home/test/proj"), "hosts")
+    def test_three_deep_paths_still_fit_the_row(self):
+        deep = ["/home/test/proj/" + "nested/" * 8 + "file{}.py".format(i)
+                for i in range(3)]
+        row = [ln for ln in self._digest(deep).splitlines()
+               if ln.startswith("      edited")][0]
+        self.assertLessEqual(display_width(row), 80, row)
+        self.assertEqual(row.count(","), 2, row)
 
-    def test_long_relative_path_is_shortened_to_last_two_parts(self):
-        rel = _relative_path("/p/" + "a/" * 20 + "deep/file.py", "/p")
-        self.assertEqual(rel, ".../deep/file.py")
+    def test_one_file_gets_the_whole_row_rather_than_a_third_of_it(self):
+        one = ["/home/test/proj/" + "nested/" * 8 + "file.py"]
+        row = [ln for ln in self._digest(one).splitlines()
+               if ln.startswith("      edited")][0]
+        self.assertLessEqual(display_width(row), 80, row)
+        # Room for more of it than any of the three above got.
+        self.assertGreater(display_width(row), 60, row)
 
-    def test_long_single_component_is_kept(self):
-        rel = _relative_path("/p/" + "n" * 50, "/p", width=10)
-        self.assertEqual(rel, "n" * 50)
+    def test_a_short_name_is_left_alone(self):
+        row = [ln for ln in self._digest(["/home/test/proj/a.py"]).splitlines()
+               if ln.startswith("      edited")][0]
+        self.assertEqual(row, "      edited   a.py")
 
 
 class TestBusiestHour(unittest.TestCase):
