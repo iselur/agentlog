@@ -214,8 +214,14 @@ class TestCmdHeadline(unittest.TestCase):
         self.assertEqual(_cmd_headline("\n\n  make test  "), "make test")
 
     def test_long_line_is_truncated(self):
+        # Ten cells means ten cells: the mark comes out of the width rather
+        # than being added once the cutting is done.  A width is a promise
+        # about the row the text goes in, and a mark added after the cut
+        # breaks that promise by exactly the width of the mark -- which is
+        # how a row that fits becomes a row that wraps.
         head = _cmd_headline("x" * 200, width=10)
-        self.assertEqual(head, "x" * 10 + "…")
+        self.assertEqual(head, "x" * 9 + "…")
+        self.assertEqual(display_width(head), 10)
 
     def test_empty_command(self):
         self.assertEqual(_cmd_headline("   \n  "), "")
