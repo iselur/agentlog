@@ -351,11 +351,14 @@ either, including any mention that it existed.  One good file beside two broken
 ones reported "1 session", in `today`, in `list` and in `--json` alike, which is
 the wrong answer in the direction that looks fine.  Every view now ends with
 
-    note: 2 log files were not counted — 1 could not be read, 1 had no readable records
+    note: 2 session logs are not shown — 1 could not be read, 1 had no readable records
           (run with --verbose to see which)
 
-and `--verbose` names the paths.  Under `--json` and `--md -` the note goes to
-stderr, so stdout stays the bare array or the bare document.  The exit code
+and `--verbose` names the paths — every one of them, not a sample, because a
+report is re-runnable and somebody who asked which files has asked for the list.
+It is the same sentence `agentwatch` prints about the same logs: one wording in
+both commands, which arrive in one install.  Under `--json` and `--md -` the
+note goes to stderr, so stdout stays the bare array or the bare document.  The exit code
 stays 0: agentlog reports, it does not gate.  An empty file is deliberately not
 one of these — a session that has just started has nothing in it yet, and
 nothing has been lost.

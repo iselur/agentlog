@@ -50,6 +50,14 @@ from datetime import datetime, timezone
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
+# The half of the sentence that says the report is short of the disk.  Written
+# once here because it is not this file's to choose: it lives in `unusable.py`,
+# which `agentwatch` prints from as well, and what these tests are about is
+# that it reached the screen at all — from `today`, from `list`, from a saved
+# report — not what its words are.  `test_the_same_note_about_logs_it_could_not
+# _read` in the stillworks tree is what pins the words.
+_SAYS_SO = "not shown"
+
 
 def _records(sid="s"):
     # The session id has to vary per file: two files carrying the same id are
@@ -110,7 +118,7 @@ class TestAFileThatCouldNotBeRead(Case):
 
     def test_the_digest_says_a_file_was_not_counted(self):
         p = self.run_cli("today")
-        self.assertIn("not counted", (p.stdout + p.stderr).lower(),
+        self.assertIn(_SAYS_SO, (p.stdout + p.stderr).lower(),
                       "a file it could not read went unmentioned:\n" + p.stdout)
 
     def test_the_digest_says_how_many(self):
@@ -118,7 +126,7 @@ class TestAFileThatCouldNotBeRead(Case):
         p = self.run_cli("today")
         # Not a bare "2": a digest is full of numbers and that assertion would
         # pass on a token count.
-        self.assertIn("2 log files", p.stdout + p.stderr, p.stdout)
+        self.assertIn("2 session logs", p.stdout + p.stderr, p.stdout)
 
     def test_verbose_names_the_file(self):
         # A count tells you something is wrong; the name tells you what to
@@ -130,11 +138,11 @@ class TestAFileThatCouldNotBeRead(Case):
         # `list` is where somebody goes looking for a session ID they know they
         # ran.  A short list with no explanation is the worst place for this.
         p = self.run_cli("list")
-        self.assertIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_the_sessions_view_says_so_too(self):
         p = self.run_cli("today", "--sessions")
-        self.assertIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_json_mode_still_prints_a_bare_list(self):
         # The published contract is a JSON array of sessions.  Warning about an
@@ -144,7 +152,7 @@ class TestAFileThatCouldNotBeRead(Case):
 
     def test_json_mode_warns_on_stderr(self):
         p = self.run_cli("today", "--json")
-        self.assertIn("not counted", p.stderr.lower(), p.stderr)
+        self.assertIn(_SAYS_SO, p.stderr.lower(), p.stderr)
 
     def test_a_saved_report_says_so(self):
         # A file outlives the terminal it was made in.  If the note only ever
@@ -153,12 +161,12 @@ class TestAFileThatCouldNotBeRead(Case):
         out = os.path.join(tempfile.mkdtemp(prefix="al-out-"), "r.html")
         self.addCleanup(shutil.rmtree, os.path.dirname(out), ignore_errors=True)
         p = self.run_cli("today", "--html", out)
-        self.assertIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_markdown_on_stdout_keeps_the_note_out_of_the_document(self):
         p = self.run_cli("today", "--md", "-")
-        self.assertNotIn("not counted", p.stdout.lower(), p.stdout)
-        self.assertIn("not counted", p.stderr.lower(), p.stderr)
+        self.assertNotIn(_SAYS_SO, p.stdout.lower(), p.stdout)
+        self.assertIn(_SAYS_SO, p.stderr.lower(), p.stderr)
 
     def test_the_exit_code_is_still_zero(self):
         # Deliberate: agentlog reports what an agent did, it does not gate
@@ -177,7 +185,7 @@ class TestAFileWithNothingReadableInIt(Case):
 
     def test_it_is_reported_too(self):
         p = self.run_cli("today")
-        self.assertIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_it_is_described_differently_from_an_unreadable_one(self):
         # Two different things to do about them: one is chmod, the other is a
@@ -198,7 +206,7 @@ class TestAnEmptyFileIsNotAProblem(Case):
 
     def test_it_is_not_reported(self):
         p = self.run_cli("today")
-        self.assertNotIn("not counted", (p.stdout + p.stderr).lower(),
+        self.assertNotIn(_SAYS_SO, (p.stdout + p.stderr).lower(),
                          "warned about a file with nothing lost in it:\n"
                          + p.stdout)
 
@@ -207,7 +215,7 @@ class TestAnOrdinaryRunIsUnaffected(Case):
 
     def test_nothing_is_said_when_every_file_was_read(self):
         p = self.run_cli("today")
-        self.assertNotIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertNotIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_the_session_is_still_reported(self):
         p = self.run_cli("today")
@@ -219,14 +227,14 @@ class TestAnOrdinaryRunIsUnaffected(Case):
         self.write("eee-partial.jsonl", "garbage\n" + _records("s2"))
         p = self.run_cli("today")
         self.assertIn("2 sessions", p.stdout, p.stdout)
-        self.assertNotIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertNotIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
     def test_the_list_view_is_unchanged(self):
         # `list` prints session ids, not file names — the good file's session
         # is "s", and it is the only row there should be.
         p = self.run_cli("list")
         self.assertIn("claude", p.stdout, p.stdout)
-        self.assertNotIn("not counted", (p.stdout + p.stderr).lower(), p.stdout)
+        self.assertNotIn(_SAYS_SO, (p.stdout + p.stderr).lower(), p.stdout)
 
 
 if __name__ == "__main__":
