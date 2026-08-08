@@ -129,6 +129,8 @@ This is confined by test, not by intention:
 
 ## Still open
 
-- A fast single-file mode (`--file <path>`), so a `PreCompact` hook can produce
-  a handover inside its ~60s timeout. Scanning the whole home takes ~3 minutes.
 - `--per-day` over a longer window.
+
+Done since: `--file <path>` (agentlog 9c67092, 2.5s on a 32-hour transcript) and
+the hook that uses it, `agentlog handover` (9e9ff83) — installed in
+`~/.claude/settings.json` on this box and round-tripped live.
