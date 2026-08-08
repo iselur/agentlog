@@ -47,7 +47,8 @@ from typing import Dict, List, Optional, Tuple
 
 from . import __version__
 from .brief import render_brief
-from .goal import clear as clear_goal, declare as declare_goal, show as show_goal
+from .goal import (clear as clear_goal, declare as declare_goal,
+                   everything_declared as declared_goals, show as show_goal)
 from .handover import handle as handle_hook
 from .parser import find_sessions, read_one_session
 from .render import (
@@ -518,7 +519,10 @@ def _run(argv=None) -> int:
             if args.verbose:
                 print(f"  searched {len(sessions)} total sessions")
         elif args.brief:
-            print(render_brief(filtered, period_label), end="")
+            # The goal store is read here, not in the renderer, so the report
+            # module never touches the filesystem and its tests stay hermetic.
+            print(render_brief(filtered, period_label,
+                               goals=declared_goals(home_dir)), end="")
             _note_unusable(unusable, args.verbose)
             return 0
         elif args.sessions:

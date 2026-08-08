@@ -415,10 +415,10 @@ class TestTheOneCommandThatLeavesTheMachine(Case):
     only covers the screen is not the promise the README makes.
     """
 
-    ANSWER = ("THEME: get the service deployed\n"
-              "PROJECTS: api\n"
-              "DID: the tests were run and the change went in.\n"
-              "OPEN: the deploy has not happened yet.\n")
+    ANSWER = ("PROJECT: api\n"
+              "STATUS: in progress\n"
+              "SAID: the tests were run and the change went in, but the "
+              "deploy has not happened yet.\n")
 
     def test_the_prompt_carries_your_half_and_not_the_agents(self):
         model, capture = self.a_model_that_keeps_what_it_was_sent(self.ANSWER)
@@ -440,7 +440,8 @@ class TestTheOneCommandThatLeavesTheMachine(Case):
         p = self.run_log("--brief", AGENTLOG_MODEL_CMD=model)
         self.assertNotIn(ASKED, p.stdout, p.stdout)
         self.assertNotIn(SECRET, p.stdout + p.stderr)
-        self.assertIn("get the service deployed", p.stdout, p.stdout)
+        self.assertIn("the tests were run and the change went in", p.stdout,
+                      p.stdout)
 
     def test_with_no_model_it_still_prints_and_still_says_nothing(self):
         # The degraded page is the one that runs on a machine with no CLI

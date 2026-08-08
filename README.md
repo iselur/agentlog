@@ -98,9 +98,10 @@ View flags:
 ```
 --sessions        the old per-session view: one block per session, with IDs,
                   models, turn counts and token totals
---brief           a written report instead of a log: what you worked on, what
-                  is done, what is not.  This one asks a model, so it sends
-                  the day off this machine — see Privacy
+--brief           a standup report instead of a log: each project judged
+                  against its declared goal — done, in progress, failed, not
+                  started — and what is waiting on you.  This one asks a
+                  model, so it sends the day off this machine — see Privacy
 --project NAME    only projects whose name or path contains NAME
 --file PATH       read only this transcript, all of it (the time command does
                   not apply)
@@ -116,26 +117,56 @@ so a transcript copied somewhere else — or truncated so its opening records ar
 gone — still reads.
 
 `--brief` is the answer to "what did you get done today?", which is a different
-question from "what happened today?":
+question from "what happened today?".  It reads the day's transcripts and the
+goals you declared with `agentlog goal`, and reports each project against its
+goal (a synthetic day):
 
 ```
-today, Sat 8 Aug · 2h 00m · 2 sessions · 2 projects · 1.1M tokens
+today, Sat 8 Aug · 49m 00s of agent time · 3 goals in play
 
-Two things:
+  ◐ in progress — billing — "Move invoices to the new PDF library; done when g…"
+      You wanted the old PDF library gone before its license lapses. The goldens
+      still diverge on discounted invoices and the run ended red; nothing
+      shipped. My suggestion: the discount rounding looks like the thread to
+      pull first.
+      1 session · 32m 00s · 1k tokens · 1 file edited · 1 error
 
-  1. Ship the digest rewrite
-     done      The release went out and both repositories are pushed with the
-               whole suite green.
-     not done  It is not on PyPI yet, so installing still gets the old one.
-     agentlog, stillworks · 2 sessions · 2h 00m · 1.1M tokens · 2 files edited
+  ✔ done — shop-api — "Retry payment webhook; done when failures land in dead-…"
+      You wanted the payment webhook retried because checkout was silently
+      dropping failed payments. That's done: retries with backoff went in,
+      committed and pushed with the suite green. If it works as intended the
+      missing-order tickets should stop - that part is my guess.
+      1 session · 30m 00s · 1k tokens · 1 file edited
+
+  · docs-site — no goal declared.
+      The quickstart was rewritten and committed; nothing here needed a goal.
+      1 session · 49m 00s · 1k tokens · 1 file edited
+
+  Plus 2 sessions across 2 projects, 5m 00s total — no goals declared there.
+
+  ○ not started — importer-not-touched — "Rewrite the importer. Why: malformed…"
+
+  Waiting on you
+      shop-api — decide whether the retry cap stays at 5; the session ended on
+      that question.
+
+  ──────────────────────────────────────────────────────────────────────────────
+  5 sessions · 4 claude, 1 codex · busiest 09:00–10:00
+  3 files edited · 5 commands · 1 error · 6k tokens
 ```
 
-The headings and the two sentences are written by a model.  Every figure is
-not: the tally under a theme is computed from the sessions the model put in
-that theme, so a model that miscounts changes the wording and never the
-arithmetic, and a project it invents is dropped before it can carry a number.
-With no model installed the page still prints — the tallies, what finished and
-what was still failing — and says which part is missing.
+The prose is written by a model; nothing else is.  Every figure on the page is
+computed from the transcripts, a sentence in which the model states a tally is
+dropped before it can contradict them, and a project it invents is dropped
+whole.  The marks are earned, not claimed: **✔ done** needs a receipt in the
+transcripts — a commit, a push, a release — or the claim is printed as
+**◐ in progress**, which is the most it can prove; **✘ failed** is the model's
+verdict against a declared goal; **○ not started** is read off the goal store
+with no model in the room — a declared goal whose directory shows up in none of
+the day's transcripts.  A project with no goal gets the undecided mark **·**
+and is never judged.  **Waiting on you** collects what is blocked on a decision
+of yours; with no model installed the page degrades to the facts — goals,
+receipts, what was still failing — and says which part is missing.
 
 `AGENTLOG_MODEL_CMD` names the command to ask, if it should not be `claude`.
 It is run with `-p` and given the prompt on standard input.
@@ -231,6 +262,9 @@ quotation cannot drift; the label keeps it from overruling a legitimate pivot.
 Say the objective, what done looks like, and the constraints that bind it —
 not the plan.  A plan changes weekly, and a stale plan replayed as current is
 the drift this exists to prevent; the plan's residue is already in the note.
+If the goal has a reason worth keeping in front of the work, give it after
+`Why:` — `agentlog goal "Rewrite the importer. Why: malformed rows crash
+it."` — and `--brief` quotes that reason instead of inventing one.
 There is a hard cap (2,000 characters) and a declaration over it is refused
 with the count, so the anchor can never become the bloat.
 

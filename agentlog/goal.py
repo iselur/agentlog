@@ -50,7 +50,7 @@ import hashlib
 import json
 import os
 import time
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 # Room for a distilled brief -- objective, what done looks like, the
 # constraints that bind it -- and not for the plan.  About half a page.
@@ -227,6 +227,39 @@ def clear(cwd: str, home_dir: Optional[str] = None,
         whose = "this session's" if _safe(candidate) else "the shared"
         return "cleared {} goal for {}".format(whose, real)
     return "no goal was declared for {}".format(real)
+
+
+def everything_declared(home_dir: Optional[str] = None) -> Dict[str, dict]:
+    """Every declared goal, newest per directory, keyed by the real path.
+
+    The brief reads this to say what each project's work was *for*.  A
+    session-bound goal counts the same as a shared one here -- the report is
+    about the day's work, not about which shell steered it -- and where both
+    exist the newest declaration wins, because that is the one the work was
+    last pointed at.
+    """
+    goals: Dict[str, dict] = {}
+    directory = state_dir(home_dir)
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return goals
+    for name in names:
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(directory, name), encoding="utf-8") as fh:
+                record = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if (not isinstance(record, dict) or not record.get("goal")
+                or not record.get("cwd")):
+            continue
+        key = _real(str(record["cwd"]))
+        held = goals.get(key)
+        if held is None or (record.get("set_at") or 0) > (held.get("set_at") or 0):
+            goals[key] = record
+    return goals
 
 
 def anchor(cwd: str, session: str = "", home_dir: Optional[str] = None,

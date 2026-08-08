@@ -394,5 +394,78 @@ class TestTheCommandBehavesAtTheTerminal(Case):
         self.assertIn("goal", confused.stderr)
 
 
+class TestEverythingDeclared(Case):
+    """The brief's view of the store: every goal, newest per directory.
+
+    ``everything_declared`` walks the raw store files rather than asking
+    per-directory, so its promises are about the walk: a session-bound and
+    a shared declaration for one directory collapse to the newest, junk in
+    the store is skipped rather than fatal, and a store that does not exist
+    is an empty answer, not an error.
+    """
+
+    def store(self):
+        return goal.state_dir(self.home)
+
+    def test_newest_declaration_wins_across_shared_and_session_bound(self):
+        self.declare("the shared brief", now=self.clock)
+        self.declare("the session brief", now=self.clock + 10,
+                     session="sess-1")
+        held = goal.everything_declared(self.home)
+        record = held[os.path.realpath(self.cwd)]
+        self.assertEqual(record["goal"], "the session brief")
+
+    def test_a_newer_shared_goal_outranks_an_older_session_one(self):
+        # The same promise with the ages swapped: whichever file the
+        # listing yields first, the comparison -- not the walk order --
+        # must decide.
+        self.declare("the session brief", now=self.clock, session="sess-1")
+        self.declare("the shared brief", now=self.clock + 10)
+        held = goal.everything_declared(self.home)
+        record = held[os.path.realpath(self.cwd)]
+        self.assertEqual(record["goal"], "the shared brief")
+
+    def test_each_directory_appears_under_its_real_path(self):
+        self.declare("goal for alpha", cwd="/home/you/alpha")
+        self.declare("goal for beta", cwd="/home/you/beta")
+        held = goal.everything_declared(self.home)
+        self.assertEqual(
+            {os.path.realpath("/home/you/alpha"): "goal for alpha",
+             os.path.realpath("/home/you/beta"): "goal for beta"},
+            {key: record["goal"] for key, record in held.items()})
+
+    def test_a_file_that_is_not_json_named_is_not_read(self):
+        # A stray file holding a plausible record must stay invisible: if
+        # the name filter went, this decoy -- newer than anything declared
+        # -- would win the directory.
+        self.declare("the declared goal", now=self.clock)
+        decoy = {"goal": "the decoy goal", "cwd": self.cwd,
+                 "set_at": self.clock + 999}
+        with open(os.path.join(self.store(), "notes.txt"), "w",
+                  encoding="utf-8") as fh:
+            json.dump(decoy, fh)
+        held = goal.everything_declared(self.home)
+        record = held[os.path.realpath(self.cwd)]
+        self.assertEqual(record["goal"], "the declared goal")
+
+    def test_junk_in_the_store_is_skipped_not_fatal(self):
+        self.declare("the declared goal")
+        for name, body in (("broken.json", "{not json"),
+                           ("alist.json", "[1, 2]"),
+                           ("nogoal.json", json.dumps({"cwd": self.cwd})),
+                           ("nocwd.json", json.dumps({"goal": "orphaned"}))):
+            with open(os.path.join(self.store(), name), "w",
+                      encoding="utf-8") as fh:
+                fh.write(body)
+        held = goal.everything_declared(self.home)
+        self.assertEqual([os.path.realpath(self.cwd)], sorted(held))
+        self.assertEqual(held[os.path.realpath(self.cwd)]["goal"],
+                         "the declared goal")
+
+    def test_a_store_that_does_not_exist_is_an_empty_answer(self):
+        self.assertEqual({}, goal.everything_declared(
+            os.path.join(self.home, "never-made")))
+
+
 if __name__ == "__main__":
     unittest.main()
