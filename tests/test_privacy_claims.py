@@ -2,26 +2,36 @@
 
     agentlog is strictly local.  No network code.  Nothing is uploaded or sent.
 
-    It shows metadata only: file paths, shell commands, durations, and model
-    names.  Message text is never extracted or displayed.
+    Half of a conversation is shown, and it is your half. ... The agent's half
+    is never shown, and neither is anything a command did.
 
-That is the reason somebody points this tool at their own transcripts, so it
-is a contract and not a description.  The parser tests check the reading, one
+That is the reason somebody points this tool at their own transcripts, so it is
+a contract and not a description.  The parser tests check the reading, one
 record shape at a time.  This file checks the whole tool the way a user meets
-it: a home directory whose logs are full of a marker word, every output mode
-run over it, and the marker looked for in everything that comes back.
+it: a home directory whose logs are full of marker words, every output mode run
+over it, and each marker looked for in everything that comes back.
+
+There are two markers, because the promise now has two halves and a test with
+one marker can only hold one of them:
+
+  - ``ASKED`` sits in the prompt somebody typed.  Every mode that describes a
+    session **must** print it.  A digest that lists 247 commands and cannot say
+    what any of them was for is the thing this half exists to prevent, and it
+    would come back the moment nothing was watching for it.
+  - ``SECRET`` sits in everything else that is text — what the agent replied,
+    what it thought, what a command printed, what got written into a file, the
+    summary, and the two record types nobody reads.  No mode may print it.
+
+Both halves are checked in the same run over the same fixture, so neither can
+pass by the output being empty: the run that proves the prompt came out is the
+run that proves the reply did not.
 
 agentlog has a wider output surface than a tailer does — a digest, a session
 list, JSON, Markdown, a self-contained HTML file, a single-session view, and a
 diagnostics mode — and each is a separate chance to print something.  The HTML
 one matters most: it is a file, written to be sent to somebody, and the README
-warns it carries paths and commands.  It must not also carry the message text
-that the same README says is never extracted.
-
-The marker goes only in fields that are message text.  What *must* come out is
-the activity beside it — the command, the path — so a run that printed nothing
-cannot pass this file by having no output to search.  That vacuous-pass shape
-has caught this project before.
+warns it carries paths, commands and what you typed.  It must not also carry
+the agent's half, which the same README says is never extracted.
 """
 
 from __future__ import annotations
@@ -40,8 +50,16 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 
 # A word that occurs nowhere in this package, so finding it in the output means
-# it came out of a log.
+# it came out of a log.  This one is the agent's half of the conversation and
+# must never come out.
 SECRET = "SQUIRRELPLUM"
+
+# The other half: a word inside the prompt somebody typed, which every mode
+# that describes a session has to print.  Two words either side of it, so the
+# prompt reads as an instruction rather than as an acknowledgement -- `asked`
+# skips "ok" and "yes", and a one-word fixture would be testing that skip
+# instead of the promise.
+ASKED = "MARMALADEGOOSE"
 
 # The activity around it, which is what agentlog exists to show.
 COMMAND = "pytest -x"
@@ -62,12 +80,13 @@ NETWORK_MODULES = {
 
 
 def claude_log(day):
-    """A Claude Code session with a secret in every field that is message text."""
+    """A Claude Code session: the secret in the agent's half, the ask in ours."""
     return "\n".join(json.dumps(r) for r in [
         {"type": "user", "timestamp": day + "T09:00:00Z",
          "sessionId": CLAUDE_SID, "cwd": "/home/you/api",
+         # The one piece of text in this fixture that is supposed to come out.
          "message": {"role": "user", "content": [
-             {"type": "text", "text": "deploy with token " + SECRET}]}},
+             {"type": "text", "text": "deploy the " + ASKED + " service"}]}},
         {"type": "assistant", "timestamp": day + "T09:00:02Z",
          "sessionId": CLAUDE_SID, "cwd": "/home/you/api",
          "message": {"role": "assistant", "model": "claude-opus-5",
@@ -124,7 +143,8 @@ def codex_log(day):
          "payload": {"id": CODEX_SID, "cwd": "/home/you/api",
                      "originator": "codex_cli_rs"}},
         {"timestamp": day + "T09:10:01Z", "type": "event_msg",
-         "payload": {"type": "user_message", "message": "the key is " + SECRET}},
+         "payload": {"type": "user_message",
+                     "message": "ship the " + ASKED + " fix"}},
         {"timestamp": day + "T09:10:02Z", "type": "event_msg",
          "payload": {"type": "agent_message", "message": "using " + SECRET}},
         {"timestamp": day + "T09:10:03Z", "type": "response_item",
@@ -276,6 +296,82 @@ class TestMessageTextNeverReachesTheOutput(Case):
         self.assertIn(COMMAND, p.stdout)
 
 
+class TestWhatYouTypedDoesReachTheOutput(Case):
+    """The other half of the promise, and the half that rots quietly.
+
+    "Never show X" fails loudly the first time X appears.  "Always show Y"
+    fails by Y going missing from one mode in a refactor, which looks like
+    nothing at all -- the output is still there, still full of paths, and still
+    answers a question nobody asked.  So every mode that describes a session is
+    listed here by name, and each has to print the prompt.
+
+    `list` is the exception and is named as one below.
+    """
+
+    MODES = (
+        (),
+        ("--sessions",),
+        ("--json",),
+        ("--md",),
+        ("--verbose",),
+        ("week",),
+        ("show", CLAUDE_SID[:8]),
+        ("show", CODEX_SID[:8]),
+        ("--project", "api"),
+        ("today", "--json", "--sessions"),
+    )
+
+    def test_every_mode_that_describes_a_session_says_what_it_was_for(self):
+        for mode in self.MODES:
+            with self.subTest(mode=mode or ("default",)):
+                p = self.run_log(*mode)
+                said = p.stdout + p.stderr
+                self.assertIn(ASKED, said,
+                              "no mode should report a session without saying "
+                              "what it was asked for:\n" + said)
+                # In the same run, so this cannot pass by printing everything.
+                self.assertNotIn(SECRET, said)
+
+    def test_both_logs_have_their_own_prompt_read(self):
+        # One marker in two files: a mode could print the Claude prompt for
+        # both sessions and satisfy the test above, so each is asked for by id.
+        for sid in (CLAUDE_SID, CODEX_SID):
+            with self.subTest(session=sid[:8]):
+                p = self.run_log("show", sid[:8])
+                self.assertIn(ASKED, p.stdout, p.stdout + p.stderr)
+
+    def test_the_file_outputs_carry_it_because_that_is_the_point(self):
+        # The two outputs that leave the machine.  They are the ones somebody
+        # sends to a teammate, so they are the ones that most need to say what
+        # the work was for -- and the README says plainly that they do.
+        for flag, name in (("--html", "digest.html"), ("--md", "digest.md")):
+            with self.subTest(output=flag):
+                dest = os.path.join(self.out, name)
+                p = self.run_log(flag, dest)
+                self.assertEqual(p.returncode, 0, p.stderr)
+                with open(dest, encoding="utf-8") as fh:
+                    body = fh.read()
+                self.assertIn(ASKED, body)
+                self.assertNotIn(SECRET, body)
+
+    def test_the_json_names_it_so_a_script_need_not_parse_prose(self):
+        p = self.run_log("--json")
+        data = json.loads(p.stdout)
+        for s in data:
+            with self.subTest(session=s["id"][:8]):
+                self.assertIn(ASKED, s["asked"], s)
+
+    def test_the_list_view_is_the_one_exception_and_is_meant_to_be(self):
+        # `list` is a five-column index for finding a session id, not a
+        # description of one: ID, PROJECT, WHEN, DUR, SRC, each a fixed width,
+        # and a sentence does not go in a column.  Whoever finds their session
+        # here runs `show` next, which does say.  Pinned rather than left
+        # implicit so that adding it becomes a decision instead of an accident.
+        p = self.run_log("list")
+        self.assertNotIn(ASKED, p.stdout)
+        self.assertIn(CLAUDE_SID[:8], p.stdout, "the list view listed nothing")
+
+
 class TestTheRecordsNobodyReads(Case):
     """The promise has to hold for records no branch was written for.
 
@@ -341,7 +437,14 @@ class TestTheRecordsNobodyReads(Case):
         types = [json.loads(l)["type"] for l in log.splitlines()]
         self.assertIn("queue-operation", types)
         self.assertIn("frame-link", types)
-        self.assertEqual(log.count(SECRET), 9, "the marker moved")
+        # Eight places the agent's half of the conversation is written down,
+        # and exactly one prompt.  Both counts, because the fixture now carries
+        # two opposite promises and losing either marker in an edit would leave
+        # half the file passing on nothing.
+        self.assertEqual(log.count(SECRET), 8, "the secret marker moved")
+        self.assertEqual(log.count(ASKED), 1, "the prompt marker moved")
+        self.assertEqual(codex_log(self.day).count(ASKED), 1,
+                         "the prompt marker moved in the Codex fixture")
 
 
 def _claude_session(data):
@@ -473,13 +576,17 @@ class TestThereIsNoNetworkCode(unittest.TestCase):
             text = fh.read()
         for claim in ("No network code",
                       "Nothing is uploaded or sent",
-                      "Conversation text is never extracted or displayed"):
+                      "Half of a conversation is shown, and it is your half",
+                      "The agent's half is never shown"):
             self.assertIn(claim, text)
-        # The promise used to be about "message text", and it was made narrower
-        # on purpose when `away_summary` recaps started being shown.  A README
-        # that still made the old, wider promise would be making a false one,
-        # and these tests would be guarding a sentence nobody keeps.
+        # The promise has been narrowed twice, each time because something new
+        # started being shown: first for `away_summary` recaps, then for the
+        # prompt that names the work.  A README still making either older,
+        # wider promise would be making a false one, and this file would be
+        # guarding a sentence nobody keeps.
         self.assertNotIn("Message text is never extracted or displayed", text)
+        self.assertNotIn("Conversation text is never extracted or displayed",
+                         text)
         self.assertIn("away_summary", text)
 
 

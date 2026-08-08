@@ -347,6 +347,17 @@ class TestItCannotComeBack(unittest.TestCase):
         'lines.append(f"      {shortened(f, 60, keep_the_end=True)}{tag}")',
         # the project named in a session header
         'project = shortened(s["project_name"] or "?", 24)',
+        # what somebody typed, on the one row a session view gives it.  The
+        # quotes are inside the width, which is the whole reason this goes
+        # through a helper rather than being cut at the call site.
+        'return \'"\' + shortened(text, width - 2) + \'"\'',
+        # one word of a typed prompt wider than the whole row it wraps onto.
+        # Nothing else can be done with it and nowhere else can do it.
+        'rows.append(shortened(word, room))',
+        # the last row of a wrapped prompt, cut again to buy back the cells the
+        # mark and the closing quote need.  Re-cutting rather than appending is
+        # what keeps the block inside the width it was given.
+        'kept = shortened(row, max(room - display_width(tail), 1))',
     ])
 
     def test_every_row_that_is_cut_goes_through_the_one_rule(self):

@@ -25,28 +25,50 @@ cd /path/to/agentlog && python3 -m agentlog today
 module, and the repo are all just `agentlog`; the old standalone PyPI name
 `agentlog-tool` is the 0.1.x era and gets no further releases.)
 
-**Real output (2026-08-03, this machine):**
+**Real output (`agentlog on 2026-08-03`, this machine):**
 
 ```
-22h 45m active across 4 projects · today, Mon 3 Aug
+3h 21m active across 6 projects · on 2026-08-03
 
-  r102-bench          22h 43m   25 files · 143 commands · 4 errors
-      edited   parser.py, render.py, cli.py
-      failed   cd /home/val/r102-bench; echo "total:"; du -sh . 2>/dev/…
-               edit parser.py
-  val                 22h 42m   17 files · 122 commands · 8 errors
-      edited   .../.orchestrator/HANDOFF.md, .../codex-orchestrator/AGENTS.md
-      failed   cd /home/val/relay && ls .orchestrator/ && echo "=== git…
-  relay                2h 10m   no edits or commands recorded
-  codex-orchestrator   5m 07s   no edits or commands recorded
+  r102-bench             2h 44m   44 files edited · 350 commands · 13 errors
+      asked    "simplify the harness research artifact signifxantky, its a weird
+               mess of lots of unhelpful tech data. summarize the findings…"
+      edited   …/unedit/store.py, …/agentlog/parser.py, ~/agentlog/README.md
+      failed   Artifact
+               cd $CLAUDE_JOB_DIR/tmp && timeout 1800 python3 matrix.py 2>&1 | …
+               cd …/tmp && rm -rf ro && mkdir -p ro && cd ro && PYTHONPATH=~/… …
+  relay                  1h 30m   13 files edited · 320 commands
+      asked    "Round 3 of the review of a promotion from `ready-for-main` to
+               `main` (PR #240) in the Relay orchestrator repo. You reviewed…"
+      edited   relay-harness-map.h…, …/hosting.json, SkeletonPreview.tsx…
+  val                    1h 23m   18 files edited · 295 commands · 8 errors
+      asked    "I want to switch orchestrator to codex. How we are going to go
+               about it? My claude subscription will end and I wont be able to…"
+      edited   …/HANDOFF.md, …/AGENTS.md, …/BOOTSTRAP.md
+      failed   cd relay && echo "=== .gitignore ==="; cat -n .gitignore; echo "…
+               cd relay && ls .orchestrator/ && echo "=== gitignore handoff ===…
+               cd relay && wc -l .orchestrator/HANDOFF.md && echo "=== head ===…
+  codex-orchestrator     3m 13s   15 commands · 2 errors
+      asked    "Review this diff as a senior engineer: correctness, security,
+               simplicity, maintainability. WHAT IT IS. Two things, one PR, in…"
+      failed   set +e …
+  relay-review-wwx5ix7y  1m 49s   20 commands
+      asked    "You are a code reviewer acting as a hard, fail-closed gate.
+               Review ONE worker change against ONE spec. Return a verdict on…"
+  relay-review-1lj4i4i1     55s   4 commands
+      asked    "You are a code reviewer acting as a hard, fail-closed gate.
+               Review ONE worker change against ONE spec. Return a verdict on…"
 
-  19 sessions · 6 claude, 13 codex · busiest 22:00–23:00
+  22 sessions · 6 claude, 16 codex · busiest 22:00–23:00
   projects overlap — agents ran in parallel, so their times sum past the total
+  compacted 203x in 5 sessions · 8h 12m spent on it, 20,572,030 tokens dropped
   more: agentlog list · agentlog show ID · agentlog --sessions
 ```
 
-Busiest project first; the files are the ones written most often, and `failed`
-names the command behind each error rather than just counting them.
+Busiest project first. `asked` is the prompt you typed that names the work — the
+one row that says what the session was *for*; the files are the ones written
+most often, and `failed` names the command behind each error rather than just
+counting them.
 
 Generate an HTML digest you can share:
 
@@ -466,11 +488,12 @@ marker saying how much was dropped; `--json` always has the whole thing.
 **Tokens are not verified.**  Token counts come from usage fields in the logs.
 They may differ from what your billing provider records.
 
-**Conversation text is never shown.**  agentlog extracts metadata: file paths,
-shell commands, durations, model names, and token counts.  What you typed and
-what the agent replied is not extracted or displayed regardless of any flag.
-The one piece of prose it does show is the agent's own recap of a background
-turn (`away_summary`), which is described under Privacy below.
+**What the agent said is never shown; what you asked for is.**  agentlog
+extracts metadata — file paths, shell commands, durations, model names, token
+counts — plus the prompt you typed that names the work, because a digest that
+cannot say what a session was *for* is a list of filenames.  Nothing the agent
+replied, nothing it thought, and nothing a command printed is extracted or
+displayed by any flag.  This is described in full under Privacy below.
 
 **No test coverage against the developer's real logs.**  The test suite uses
 synthetic fixtures.  It cannot guarantee correct parsing of every schema variant
@@ -516,35 +539,54 @@ missing from the report.
 
 agentlog is strictly local.  No network code.  Nothing is uploaded or sent.
 
-It shows metadata: file paths, shell commands, durations, and model names.
-Conversation text is never extracted or displayed — not what you typed, not
-what the agent replied.
+**Half of a conversation is shown, and it is your half.**  Every mode prints
+the prompt you typed that names the work — `asked: "fix the parser and run the
+suite"` — because a digest that lists 247 commands and cannot say what any of
+them was for is answering a question nobody asks.  Somebody wrote down the goal
+of the session at the top of it; there is no honest way to report the session
+without it.
 
-There is one exception, and it is the reason this paragraph is longer than it
-used to be.  A background session ends each turn by writing itself a short
-recap — *"You asked what's in the ledger: it tracks 104 requests, all done
-except R102"* — as a `system` record with subtype `away_summary`.  agentlog
-shows those.  They are not conversation text: nothing you typed and nothing the
-agent said is quoted, and Claude Code had already put the same sentence on your
-screen.  But they are *about* the conversation, and a recap describes what a
-session was for far better than a list of paths can.  If that is a line you
-would not want in something you share, it is in `agentlog show`, `--md`,
-`--json` and the HTML digest, and the note at the foot of the HTML says so.
+Not the whole of your half.  One prompt per session: the first that says what
+is wanted rather than agreeing with something ("ok", "yes", "continue" are
+skipped), cut to 400 characters, and cut again to whatever room the row has.
 
-The HTML digest may contain file paths, shell commands, and those recaps.
-Review it before sharing it with others.
+**The agent's half is never shown**, and neither is anything a command did:
 
-That promise has to hold for the parts of a session file that are not the
-conversation, and two of those carry message text where nobody looks for it: a
+| shown | not shown |
+| --- | --- |
+| the prompt that names the work | anything the agent replied |
+| file paths read and written | anything the agent thought (`thinking`) |
+| shell commands, and which failed | anything a command printed (`tool_result`) |
+| durations, model names, token counts | the contents of a file it wrote |
+| the agent's `away_summary` recaps | prompts you queued but never sent |
+
+Two of those rows are less obvious than the rest, so they are worth naming.
+
+A background session ends each turn by writing itself a short recap — *"You
+asked what's in the ledger: it tracks 104 requests, all done except R102"* — as
+a `system` record with subtype `away_summary`.  agentlog shows those.  They are
+written by the agent about the conversation rather than in it, and Claude Code
+had already put the same sentence on your screen.
+
+And two parts of a session file carry message text where nobody looks for it: a
 `queue-operation` record holds the whole of a prompt you typed while the agent
 was busy, and a `frame-link` record holds a question of yours turned into a
 heading. There are 4983 of the first and 104 of the second in this machine's
-logs. agentlog has no branch for either, and `tests/test_privacy_claims.py`
-keeps them in its fixture — checked against the HTML digest too, since that one
-leaves the machine — so the day somebody writes a branch, the tests are what
-they meet first. A queued prompt is also not counted as a turn: more than half
-are never sent (2494 enqueued against 1121 dequeued here), and the ones that
-are get written again as a normal record when they go.
+logs. agentlog reads neither — a prompt you queued and closed the terminal on
+was never asked, and more than half are never sent (2494 enqueued against 1121
+dequeued here); the ones that are get written again as an ordinary prompt when
+they go, and that copy is the one agentlog reads.
+
+`tests/test_privacy_claims.py` is where all of this is enforced rather than
+promised: one marker planted in the prompt, which every output mode must show,
+and another planted in the agent's replies, its thinking, a tool result, a
+written file, a recap's neighbours, a `queue-operation` and a `frame-link`,
+which no output mode may show — the HTML digest included, since that one leaves
+the machine.
+
+The HTML digest may therefore contain file paths, shell commands, recaps, and
+what you typed to ask for the work.  Review it before sharing it with others;
+the note at the foot of the page says the same thing.
 
 ---
 
