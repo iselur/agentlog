@@ -91,6 +91,8 @@ agentlog show SESSION_ID        one session in full detail
 agentlog list                   50 most-recent sessions as a compact table
 agentlog list --all             all sessions (no row limit)
 agentlog list --limit N         show at most N sessions
+agentlog handover               run by an agent hook, not by you — see
+                                "The note a session leaves itself"
 
 agentlog list (first 3 rows):
 
@@ -167,6 +169,53 @@ Exit codes: 0 normal, 2 usage or argument error, 130 stopped by ctrl-c,
 `q`). The last two are deliberately not 0: a digest that was cut off
 short reported nothing about your day, and `agentlog today > digest.md
 && mail-it` should not mail half of one.
+
+---
+
+## The note a session leaves itself
+
+A long conversation gets compacted: the transcript is replaced by a summary so
+the work can carry on, and what the agent knew about the last four hours
+becomes whatever the summary kept.  The transcript is still on disk and still
+complete, so the facts are not gone — only the agent's hold on them is.
+
+`agentlog handover` reads the transcript in the moment before compaction, writes
+down what the session had actually done, and hands it back when the session
+resumes.  Two hooks in `~/.claude/settings.json`, the same line twice:
+
+```json
+{
+  "hooks": {
+    "PreCompact": [
+      {"matcher": "auto",   "hooks": [{"type": "command", "command": "agentlog handover"}]},
+      {"matcher": "manual", "hooks": [{"type": "command", "command": "agentlog handover"}]}
+    ],
+    "SessionStart": [
+      {"matcher": "compact", "hooks": [{"type": "command", "command": "agentlog handover"}]}
+    ]
+  }
+}
+```
+
+Which of the two jobs to do is read off the event name in the payload, so there
+is no flag to get the wrong way round.  What comes back is the same digest the
+plain command prints — where the work was, how long, which files were edited,
+which commands kept failing — under a line saying where it came from.
+
+Three deliberate choices:
+
+- **No model.** Compaction already writes a summary; a second account of the
+  same conversation would drift the same way.  What a compacted session cannot
+  reconstruct is the plain record, and that is all this hands over.
+- **Once.** The note is deleted as it is handed over.  Left behind it would be
+  injected again at the next compaction, stating two-hour-old facts in the
+  present tense.
+- **Never in the way.** Every failure exits 0 and explains itself on stderr.  A
+  `PreCompact` hook that exits non-zero blocks the compaction it was watching,
+  so the agent stops and the reason is the note-taker.
+
+It is quick enough to sit in a hook's timeout: about two seconds on a
+thirty-hour session, against minutes for a whole-home scan.
 
 ---
 
