@@ -187,18 +187,22 @@ resumes.  Two hooks in `~/.claude/settings.json`, the same line twice:
 {
   "hooks": {
     "PreCompact": [
-      {"matcher": "auto",   "hooks": [{"type": "command", "command": "agentlog handover"}]},
-      {"matcher": "manual", "hooks": [{"type": "command", "command": "agentlog handover"}]}
+      {"matcher": "auto",   "hooks": [{"type": "command", "command": "agentlog handover || true"}]},
+      {"matcher": "manual", "hooks": [{"type": "command", "command": "agentlog handover || true"}]}
     ],
     "SessionStart": [
-      {"matcher": "compact", "hooks": [{"type": "command", "command": "agentlog handover"}]}
+      {"matcher": "compact", "hooks": [{"type": "command", "command": "agentlog handover || true"}]}
     ]
   }
 }
 ```
 
 Which of the two jobs to do is read off the event name in the payload, so there
-is no flag to get the wrong way round.  What comes back is the same digest the
+is no flag to get the wrong way round.  The `|| true` is not superstition: a
+`PreCompact` hook that exits non-zero blocks the compaction it was watching, and
+the one way this command can exit non-zero is by being an older `agentlog` that
+has never heard of `handover`.  One idiom and an upgrade half-done can no longer
+stop your session.  What comes back is the same digest the
 plain command prints — where the work was, how long, which files were edited,
 which commands kept failing — under a line saying where it came from.
 
