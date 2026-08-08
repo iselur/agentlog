@@ -106,8 +106,36 @@ View flags:
 ```
 --sessions        the old per-session view: one block per session, with IDs,
                   models, turn counts and token totals
+--brief           a written report instead of a log: what you worked on, what
+                  is done, what is not.  This one asks a model, so it sends
+                  the day off this machine — see Privacy
 --project NAME    only projects whose name or path contains NAME
 ```
+
+`--brief` is the answer to "what did you get done today?", which is a different
+question from "what happened today?":
+
+```
+today, Sat 8 Aug · 2h 00m · 2 sessions · 2 projects · 1.1M tokens
+
+Two things:
+
+  1. Ship the digest rewrite
+     done      The release went out and both repositories are pushed with the
+               whole suite green.
+     not done  It is not on PyPI yet, so installing still gets the old one.
+     agentlog, stillworks · 2 sessions · 2h 00m · 1.1M tokens · 2 files edited
+```
+
+The headings and the two sentences are written by a model.  Every figure is
+not: the tally under a theme is computed from the sessions the model put in
+that theme, so a model that miscounts changes the wording and never the
+arithmetic, and a project it invents is dropped before it can carry a number.
+With no model installed the page still prints — the tallies, what finished and
+what was still failing — and says which part is missing.
+
+`AGENTLOG_MODEL_CMD` names the command to ask, if it should not be `claude`.
+It is run with `-p` and given the prompt on standard input.
 
 Output flags:
 
@@ -537,7 +565,20 @@ missing from the report.
 
 ## Privacy
 
-agentlog is strictly local.  No network code.  Nothing is uploaded or sent.
+agentlog reads files and prints.  No network code.  Nothing is uploaded or sent.
+
+**One command is the exception, and this is it: `--brief`.**  It asks a model to
+name what the day's work was, because grouping eleven sessions into "getting the
+release out" is a judgement and there is no arithmetic for it.  To do that it
+hands the day's evidence — project names, the prompts you typed, shell commands,
+file paths, the agent's own recaps — to the `claude` command already installed on
+your machine.  That evidence leaves the machine.  Nothing else here does, and
+that is not a promise about intentions: `agentlog/asking_a_model.py` is the only
+module in the package allowed to run another program at all, and
+`tests/test_privacy_claims.py` fails if a second one ever does.  The flag's own
+help says the same in one line, and no other mode may be combined with it.
+
+The rest of this section describes every other command.
 
 **Half of a conversation is shown, and it is your half.**  Every mode prints
 the prompt you typed that names the work — `asked: "fix the parser and run the

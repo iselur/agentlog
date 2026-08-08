@@ -78,6 +78,18 @@ NETWORK_MODULES = {
     "aiohttp", "websockets",
 }
 
+# Running another program is how `--brief` reaches a model, so `subprocess` can
+# no longer be forbidden outright.  It is confined instead: exactly one module
+# may import it, and that module is named after the thing it does, so "does
+# agentlog talk to anything?" stays a question with a one-line answer.
+#
+# Confinement is the whole guard.  Without it the promise would be "we only
+# call out in the place we meant to", which is a sentence about intentions;
+# with it the promise is a property of the tree that fails a test the moment it
+# stops holding.
+RUNS_ANOTHER_PROGRAM = {"subprocess", "multiprocessing", "asyncio", "pty"}
+MAY_RUN_ANOTHER_PROGRAM = "asking_a_model.py"
+
 
 def claude_log(day):
     """A Claude Code session: the secret in the agent's half, the ask in ours."""
@@ -211,11 +223,30 @@ class Case(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(text)
 
-    def run_log(self, *argv):
+    def run_log(self, *argv, **extra_env):
         return subprocess.run(
             [sys.executable, "-m", "agentlog", "--home", self.home, *argv],
             capture_output=True, text=True,
-            env=dict(os.environ, PYTHONPATH=_ROOT, COLUMNS="100"))
+            env=dict(os.environ, PYTHONPATH=_ROOT, COLUMNS="100", **extra_env))
+
+    def a_model_that_keeps_what_it_was_sent(self, answer):
+        """A stand-in for the `claude` command: records the prompt, prints back.
+
+        The point of `--brief` is that something leaves this machine, so the
+        test that matters is not "what did it print" but "what did it send".
+        A real model would answer differently every run and could not be asked
+        that question at all; this one hands the prompt back on disk.
+        """
+        capture = os.path.join(self.out, "sent-to-the-model.txt")
+        script = os.path.join(self.out, "fake-model")
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write("#!{}\n"
+                     "import sys\n"
+                     "open({!r}, 'w').write(sys.stdin.read())\n"
+                     "sys.stdout.write({!r})\n".format(
+                         sys.executable, capture, answer))
+        os.chmod(script, 0o755)
+        return script, capture
 
 
 class TestMessageTextNeverReachesTheOutput(Case):
@@ -372,6 +403,81 @@ class TestWhatYouTypedDoesReachTheOutput(Case):
         self.assertIn(CLAUDE_SID[:8], p.stdout, "the list view listed nothing")
 
 
+class TestTheOneCommandThatLeavesTheMachine(Case):
+    """`--brief` sends the day to a model, and the README says which day.
+
+    Every other mode is checked for what it *prints*.  This one has a second
+    surface nobody can see from the terminal -- what went out -- and that is the
+    surface a person actually cares about.  So the fixture's two markers are
+    looked for in the prompt itself: the half of the conversation the README
+    says is shown must be in it, because naming the work is the entire job, and
+    the half the README says is never shown must not, because a promise that
+    only covers the screen is not the promise the README makes.
+    """
+
+    ANSWER = ("THEME: get the service deployed\n"
+              "PROJECTS: api\n"
+              "DID: the tests were run and the change went in.\n"
+              "OPEN: the deploy has not happened yet.\n")
+
+    def test_the_prompt_carries_your_half_and_not_the_agents(self):
+        model, capture = self.a_model_that_keeps_what_it_was_sent(self.ANSWER)
+        p = self.run_log("--brief", AGENTLOG_MODEL_CMD=model)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        with open(capture, encoding="utf-8") as fh:
+            sent = fh.read()
+        self.assertIn(ASKED, sent,
+                      "the model was asked what the work was for without "
+                      "being told what was asked for")
+        self.assertNotIn(SECRET, sent,
+                         "the agent's half of the conversation left the "
+                         "machine:\n" + sent)
+
+    def test_the_page_does_not_read_your_own_prompt_back_to_you(self):
+        # The reason this view exists.  The digest prints `asked "..."`; a
+        # report does not, because the person reading it typed it.
+        model, _ = self.a_model_that_keeps_what_it_was_sent(self.ANSWER)
+        p = self.run_log("--brief", AGENTLOG_MODEL_CMD=model)
+        self.assertNotIn(ASKED, p.stdout, p.stdout)
+        self.assertNotIn(SECRET, p.stdout + p.stderr)
+        self.assertIn("get the service deployed", p.stdout, p.stdout)
+
+    def test_with_no_model_it_still_prints_and_still_says_nothing(self):
+        # The degraded page is the one that runs on a machine with no CLI
+        # installed, so it is the one most likely to be seen and the least
+        # likely to be looked at.
+        gone = os.path.join(self.out, "no-such-model")
+        p = self.run_log("--brief", AGENTLOG_MODEL_CMD=gone)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn(SECRET, p.stdout + p.stderr)
+        self.assertIn("no summary", p.stdout, p.stdout)
+
+    def test_nothing_is_sent_by_any_other_mode(self):
+        # `--brief` is the exception; the exception has to have an edge.  Every
+        # other mode runs with the same model command pointed at a file, and
+        # the file must not appear.
+        model, capture = self.a_model_that_keeps_what_it_was_sent(self.ANSWER)
+        for mode in ((), ("--sessions",), ("--json",), ("week",), ("list",),
+                     ("show", CLAUDE_SID[:8])):
+            with self.subTest(mode=mode or ("default",)):
+                self.run_log(*mode, AGENTLOG_MODEL_CMD=model)
+                self.assertFalse(os.path.exists(capture),
+                                 "{} asked a model".format(mode or "default"))
+
+    def test_the_file_outputs_do_not_quietly_become_briefs(self):
+        # A brief is read and thrown away; `--html` and `--md` are files people
+        # send to each other.  Mixing them would put model-written prose into a
+        # document that is otherwise all facts, so the CLI refuses.
+        for flag in ("--html", "--md", "--json", "--sessions"):
+            with self.subTest(flag=flag):
+                argv = ["--brief", flag]
+                if flag in ("--html", "--md"):
+                    argv.append(os.path.join(self.out, "out" + flag))
+                p = self.run_log(*argv)
+                self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+                self.assertIn("--brief", p.stderr)
+
+
 class TestTheRecordsNobodyReads(Case):
     """The promise has to hold for records no branch was written for.
 
@@ -511,6 +617,57 @@ class TestThereIsNoNetworkCode(unittest.TestCase):
                         "{}:{} imports {}".format(
                             os.path.basename(path), node.lineno, name))
 
+    def test_only_one_named_module_may_run_another_program(self):
+        # The exception has to be *locatable*, not merely small.  A model call
+        # added to `render.py` would be as offline-looking as the rest of the
+        # file and nobody re-reads a package's imports by hand every release.
+        offenders = []
+        for path in self._sources():
+            with open(path, encoding="utf-8") as fh:
+                tree = ast.parse(fh.read(), path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    if name.split(".")[0] not in RUNS_ANOTHER_PROGRAM:
+                        continue
+                    if os.path.basename(path) == MAY_RUN_ANOTHER_PROGRAM:
+                        continue
+                    offenders.append("{}:{} imports {}".format(
+                        os.path.basename(path), node.lineno, name))
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_the_one_module_that_may_is_still_there_to_be_confined(self):
+        # Otherwise the test above passes forever on a package that no longer
+        # has the exception -- and the day somebody adds a second one, it would
+        # be this file that said nothing.
+        here = os.path.join(_ROOT, "agentlog", MAY_RUN_ANOTHER_PROGRAM)
+        self.assertTrue(os.path.exists(here), here)
+        with open(here, encoding="utf-8") as fh:
+            self.assertIn("import subprocess", fh.read())
+
+    def test_running_a_program_by_the_back_door_is_not_a_way_round_it(self):
+        # `os.system` and `os.popen` need no import to find, so the check above
+        # cannot see them at all.
+        for path in self._sources():
+            with open(path, encoding="utf-8") as fh:
+                tree = ast.parse(fh.read(), path)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if not isinstance(fn, ast.Attribute):
+                    continue
+                base = getattr(fn.value, "id", None)
+                if base == "os" and fn.attr in ("system", "popen",
+                                                "spawnl", "spawnv", "execv"):
+                    self.fail("{}:{} runs a program through os.{}".format(
+                        os.path.basename(path), node.lineno, fn.attr))
+
     def test_no_import_is_hidden_behind_a_string(self):
         # The check above reads import statements, so a module named by a
         # string would walk straight past it.
@@ -588,6 +745,18 @@ class TestThereIsNoNetworkCode(unittest.TestCase):
         self.assertNotIn("Conversation text is never extracted or displayed",
                          text)
         self.assertIn("away_summary", text)
+        # And now there is one command that does send something, so a README
+        # making the old unqualified claim would be making a false one.  The
+        # exception has to be named in the same section as the promise: a
+        # person deciding whether to run this tool reads one place.
+        self.assertIn("--brief", text, "the README does not mention --brief")
+        privacy = text.split("## Privacy", 1)[1].split("\n---", 1)[0]
+        self.assertIn("--brief", privacy,
+                      "the privacy section does not name the one command that "
+                      "sends anything")
+        self.assertIn("asking_a_model.py", privacy,
+                      "the privacy section does not say where the exception "
+                      "lives, so a reader cannot check it")
 
 
 if __name__ == "__main__":
