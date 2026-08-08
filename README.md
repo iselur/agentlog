@@ -110,7 +110,18 @@ View flags:
                   is done, what is not.  This one asks a model, so it sends
                   the day off this machine — see Privacy
 --project NAME    only projects whose name or path contains NAME
+--file PATH       read only this transcript, all of it (the time command does
+                  not apply)
 ```
+
+`--file` is for the caller that already knows which file it wants.  Reading one
+transcript takes about two seconds where reading a whole home takes minutes,
+which is the difference between fitting inside an agent hook's timeout and not.
+The time command is ignored on purpose: a session you name by path is reported
+whole, including the part of it that happened yesterday.  Which agent wrote the
+file is worked out by reading it, not from where it sits or what it is called,
+so a transcript copied somewhere else — or truncated so its opening records are
+gone — still reads.
 
 `--brief` is the answer to "what did you get done today?", which is a different
 question from "what happened today?":
