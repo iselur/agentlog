@@ -163,6 +163,30 @@ class TestItIsThisSessionsNoteAndItIsHandedOverOnce(Case):
         for path in notes:
             self.assertEqual(os.path.dirname(path), store, path)
 
+    def test_a_subagents_compaction_writes_nothing_and_takes_nothing(self):
+        # Codex fires PreCompact for a subagent's compaction carrying the
+        # *parent's* session_id plus an agent_id of its own.  A note written
+        # then would be the subagent's story, handed to the root session at
+        # its next resume and stated as the root's own past.
+        self.pre_compact()  # the root's real note, written first
+        out, err = self.pre_compact(
+            path=self.a_transcript("sub.jsonl", "sess-1",
+                                   cwd="/home/you/sub-errand"),
+            agent_id="agent-77")
+        self.assertEqual((out, err), ("", ""))
+        text = self.injected(self.session_start()[0])
+        self.assertIn("thing", text)  # the root's note, untouched
+        self.assertNotIn("sub-errand", text)
+
+    def test_the_store_and_the_note_are_private_to_their_owner(self):
+        # A note is a condensed transcript -- prompts, paths, failing
+        # commands -- sitting in a directory another local user could list.
+        self.pre_compact()
+        store = handover.state_dir(self.home)
+        self.assertEqual(os.stat(store).st_mode & 0o777, 0o700)
+        note = os.path.join(store, "sess-1.txt")
+        self.assertEqual(os.stat(note).st_mode & 0o777, 0o600)
+
     def test_old_notes_are_swept_so_the_store_does_not_grow_forever(self):
         store = handover.state_dir(self.home)
         os.makedirs(store)
