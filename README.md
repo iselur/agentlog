@@ -25,43 +25,30 @@ cd /path/to/agentlog && python3 -m agentlog today
 module, and the repo are all just `agentlog`; the old standalone PyPI name
 `agentlog-tool` is the 0.1.x era and gets no further releases.)
 
-**Real output (`agentlog on 2026-08-03`, this machine):**
+**What it prints (`agentlog on 2026-08-03` — an invented day; yours shows your
+own prompts and files):**
 
 ```
-3h 21m active across 6 projects · on 2026-08-03
+2h 58m active across 3 projects · on 2026-08-03
 
-  r102-bench             2h 44m   44 files edited · 350 commands · 13 errors
-      asked    "simplify the harness research artifact signifxantky, its a weird
-               mess of lots of unhelpful tech data. summarize the findings…"
-      edited   …/unedit/store.py, …/agentlog/parser.py, ~/agentlog/README.md
-      failed   Artifact
-               cd $CLAUDE_JOB_DIR/tmp && timeout 1800 python3 matrix.py 2>&1 | …
-               cd …/tmp && rm -rf ro && mkdir -p ro && cd ro && PYTHONPATH=~/… …
-  relay                  1h 30m   13 files edited · 320 commands
-      asked    "Round 3 of the review of a promotion from `ready-for-main` to
-               `main` (PR #240) in the Relay orchestrator repo. You reviewed…"
-      edited   relay-harness-map.h…, …/hosting.json, SkeletonPreview.tsx…
-  val                    1h 23m   18 files edited · 295 commands · 8 errors
-      asked    "I want to switch orchestrator to codex. How we are going to go
-               about it? My claude subscription will end and I wont be able to…"
-      edited   …/HANDOFF.md, …/AGENTS.md, …/BOOTSTRAP.md
-      failed   cd relay && echo "=== .gitignore ==="; cat -n .gitignore; echo "…
-               cd relay && ls .orchestrator/ && echo "=== gitignore handoff ===…
-               cd relay && wc -l .orchestrator/HANDOFF.md && echo "=== head ===…
-  codex-orchestrator     3m 13s   15 commands · 2 errors
-      asked    "Review this diff as a senior engineer: correctness, security,
-               simplicity, maintainability. WHAT IT IS. Two things, one PR, in…"
-      failed   set +e …
-  relay-review-wwx5ix7y  1m 49s   20 commands
-      asked    "You are a code reviewer acting as a hard, fail-closed gate.
-               Review ONE worker change against ONE spec. Return a verdict on…"
-  relay-review-1lj4i4i1     55s   4 commands
-      asked    "You are a code reviewer acting as a hard, fail-closed gate.
-               Review ONE worker change against ONE spec. Return a verdict on…"
+  shop-api   1h 41m   21 files edited · 214 commands · 9 errors
+      asked    "add a retry with backoff to the payment webhook, and make the
+               failure path land in the dead-letter table so nothing is…"
+      edited   …/webhooks/payments.py, …/dead_letter.py, …/test_webhooks.py
+      failed   pytest tests/test_webhooks.py -k retry …
+               alembic upgrade head …
+  docs-site     49m   6 files edited · 78 commands
+      asked    "rewrite the quickstart so someone who has never seen the CLI
+               can follow it — every command copy-pasteable…"
+      edited   docs/quickstart.md, docs/install.md, mkdocs.yml
+  infra         28m   3 files edited · 51 commands · 2 errors
+      asked    "why did the staging deploy roll back last night? read the
+               pipeline logs and tell me before touching anything…"
+      edited   …/deploy/staging.yml, …/deploy/rollback.sh
+      failed   kubectl logs deploy/api -n staging --since=12h …
 
-  22 sessions · 6 claude, 16 codex · busiest 22:00–23:00
-  projects overlap — agents ran in parallel, so their times sum past the total
-  compacted 203x in 5 sessions · 8h 12m spent on it, 20,572,030 tokens dropped
+  5 sessions · 3 claude, 2 codex · busiest 15:00–16:00
+  compacted 17x in 2 sessions · 1h 3m spent on it, 2,481,506 tokens dropped
   more: agentlog list · agentlog show ID · agentlog --sessions
 ```
 
@@ -101,9 +88,9 @@ agentlog list (first 3 rows):
 
 ID        PROJECT                   WHEN              DUR       SRC
 --------  ------------------------  ----------------  --------  ------
-019fc4b9  relay                     2026-08-02 23:05  6m 18s    codex
-019fc4a7  relay                     2026-08-02 22:45  6m 41s    codex
-019fc4a1  relay                     2026-08-02 22:39  4m 29s    codex
+019fc4b9  shop-api                  2026-08-02 23:05  6m 18s    codex
+019fc4a7  shop-api                  2026-08-02 22:45  6m 41s    codex
+019fc4a1  docs-site                 2026-08-02 22:39  4m 29s    codex
 ```
 
 View flags:
