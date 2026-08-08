@@ -91,6 +91,9 @@ agentlog show SESSION_ID        one session in full detail
 agentlog list                   50 most-recent sessions as a compact table
 agentlog list --all             all sessions (no row limit)
 agentlog list --limit N         show at most N sessions
+agentlog goal "TEXT"            declare what this project's work is for;
+                                replayed at every resume from compaction
+agentlog goal                   show the declared goal; --clear forgets it
 agentlog handover               run by an agent hook, not by you — see
                                 "The note a session leaves itself"
 
@@ -217,6 +220,42 @@ Three deliberate choices:
 - **Never in the way.** Every failure exits 0 and explains itself on stderr.  A
   `PreCompact` hook that exits non-zero blocks the compaction it was watching,
   so the agent stops and the reason is the note-taker.
+
+### The declared goal
+
+The note carries receipts — directories, files, failing commands — and receipts
+cannot say what the work was *for*.  That is what drifts: each summary of a
+summary reframes the job a little, until the session is confidently doing
+something adjacent to what was asked.  Nothing in a transcript is reliably "the
+goal" — the first prompt is history, the latest is a correction — so the goal
+is declared, in so many words:
+
+```
+agentlog goal "Ship the importer. Done when a malformed row is reported and the clean rows still land. Constraint: no new dependencies."
+```
+
+The convention: declare it when a brief is accepted — by you, or by the agent
+the moment it takes the job — redeclare it when the brief changes, and
+`agentlog goal --clear` when it is done.  From then on every resume from
+compaction opens with the declaration, quoted verbatim under a label saying
+when it was set and that newer instructions from the user override it.  A
+quotation cannot drift; the label keeps it from overruling a legitimate pivot.
+
+Say the objective, what done looks like, and the constraints that bind it —
+not the plan.  A plan changes weekly, and a stale plan replayed as current is
+the drift this exists to prevent; the plan's residue is already in the note.
+There is a hard cap (2,000 characters) and a declaration over it is refused
+with the count, so the anchor can never become the bloat.
+
+Goals are keyed by the directory they are declared in — and by the session,
+when the declaring shell belongs to one.  Declared inside a Claude Code
+session (the agent accepting a brief), the goal binds to that session and is
+never replayed into any other: two sessions working the same directory are
+two briefs, and crossing them would be the drift this exists to prevent.
+Declared at a bare terminal, it is the directory's shared north star — the
+fallback any session without a goal of its own resumes with.  Either way it
+lives in the same private `~/.agentlog` store as the notes — never in your
+repository.
 
 It is quick enough to sit in a hook's timeout: about two seconds on a
 thirty-hour session, against minutes for a whole-home scan.
